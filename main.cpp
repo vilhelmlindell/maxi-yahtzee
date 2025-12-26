@@ -8,10 +8,10 @@
 #include <cstdlib>
 #include <fstream>
 #include <iomanip>
+#include <iostream>
 #include <map>
 #include <memory>
 #include <optional>
-#include <print>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -107,7 +107,7 @@ inline const char* category_string(Category c) {
 }
 
 struct Player {
-    array<optional<uint8_t>, to_underlying(Category::Count)> scores{};
+    array<optional<uint8_t>, (int)(Category::Count)> scores{};
     int8_t rerolls = 2;
 };
 
@@ -398,7 +398,7 @@ struct Game {
         }
     }
     bool is_terminal() {
-        return rounds == to_underlying(Category::Count);
+        return rounds == (int)(Category::Count);
     }
     uint8_t winner() {
         return 0;
@@ -419,7 +419,7 @@ struct Game {
         switch (move.type) {
         case Move::Type::Score: {
             CategoryEntry entry = move.score_entry;
-            player().scores[to_underlying(entry.category)] = entry.score;
+            player().scores[(int)(entry.category)] = entry.score;
             next_player();
             break;
         }
@@ -441,7 +441,7 @@ struct Game {
             if (fast_rand(2)) {
                 vector<CategoryEntry> categories = dice.categories();
                 CategoryEntry entry = categories[fast_rand(categories.size())];
-                player().scores[to_underlying(entry.category)] = entry.score;
+                player().scores[(int)(entry.category)] = entry.score;
                 next_player();
             } else if (player().rerolls > 0) {
                 uint8_t mask = fast_rand((1 << 6) - 1) + 1;
@@ -593,7 +593,7 @@ struct MCTSNode {
             move.type = Move::Type::Reroll;
             move.reroll_mask = mask;
         } else {
-            print("rerolls: {} fisher: {} a {} b {}\n", rerolls_left, fisher_i, rerolls_done, categories_done);
+            std::cout << "rerolls: " << rerolls_left << " fisher: " << fisher_i << " a " << rerolls_done << " b " << categories_done << '\n';
         }
 
         return move;
@@ -654,7 +654,8 @@ struct MCTSNode {
 
         double winrate = visits > 0 ? (double)wins / (double)visits : 0.0;
 
-        oss << "Visits: " << visits << " | Wins: " << wins << " | Winrate: " << std::fixed << std::setprecision(4) << winrate << " | UCT: " << std::setprecision(4) << uct() << " | ";
+        oss << "Visits: " << visits << " | Wins: " << wins << " | Winrate: " << std::fixed << std::setprecision(4) << winrate << " | UCT: " << std::setprecision(4) << uct()
+            << " | ";
 
         if (move) {
             oss << "Move: " << move.value().to_string();
@@ -677,7 +678,7 @@ int main() {
     vector<unique_ptr<MCTSNode>> thread_roots;
     vector<thread> threads;
 
-    auto duration = std::chrono::seconds(200);
+    auto duration = std::chrono::seconds(10);
 
     for (int i = 0; i < num_threads; i++) {
         thread_roots.push_back(make_unique<MCTSNode>(game));
@@ -709,13 +710,12 @@ int main() {
         }
     }
 
-    std::sort(total->children.begin(), total->children.end(), 
-        [](const unique_ptr<MCTSNode>& a, const unique_ptr<MCTSNode>& b) {
-            return a->visits > b->visits;
-        });
+    std::sort(total->children.begin(), total->children.end(), [](const unique_ptr<MCTSNode>& a, const unique_ptr<MCTSNode>& b) {
+        return a->visits > b->visits;
+    });
 
     for (auto& node : total->children) {
-        print("{}\n", node->to_string());
+        cout << node->to_string() << std::endl;
     }
 
     // root.save_tree("mcts_tree.dot", 4);

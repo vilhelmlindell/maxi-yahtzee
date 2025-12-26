@@ -1,5 +1,5 @@
 CXX      := g++
-CXXFLAGS := -Wall -Wextra -std=c++23 -g -O3 -fconcepts-diagnostics-depth=2
+CXXFLAGS := -Wall -Wextra -std=c++17 -g -O3
 
 TARGET   := maxi-yahtzee
 SOURCES  := $(wildcard *.cpp)
