@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cassert>
 #include <chrono>
 #include <cmath>
@@ -9,7 +10,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
-#include <map>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <thread>
@@ -28,9 +29,27 @@ inline uint32_t xorshift32() {
     rng_state = x;
     return x;
 }
+//static inline uint32_t xorshift32(void) {
+//    rng_state = rng_state * 1664525u + 1013904223u;
+//    return rng_state & 7u; // 3 bits
+//}
 
 inline uint32_t fast_rand(uint32_t max) {
     return xorshift32() % max;
+}
+
+uint32_t random_set_bit(uint32_t x) {
+    uint32_t start = rand() & 31;
+    uint32_t y = (x >> start) | (x << (32 - start));
+    return ((__builtin_ctz(y) + start) & 31);
+}
+
+inline uint32_t parse_uint(const std::string& s) {
+    size_t idx = 0;
+    uint32_t value = std::stoul(s, &idx, 0); // base=0 → auto-detect
+    if (idx != s.size())
+        throw std::invalid_argument("Invalid integer: " + s);
+    return value;
 }
 
 enum class Category : uint8_t {
@@ -57,7 +76,7 @@ enum class Category : uint8_t {
     Count,
 };
 
-inline const char* category_string(Category c) {
+inline const char* string_from_category(Category c) {
     switch (c) {
     case Category::Ones:
         return "Ones";
@@ -106,9 +125,57 @@ inline const char* category_string(Category c) {
     }
 }
 
+inline Category category_from_string(std::string_view s) {
+    if (s == "Ones")
+        return Category::Ones;
+    if (s == "Twos")
+        return Category::Twos;
+    if (s == "Threes")
+        return Category::Threes;
+    if (s == "Fours")
+        return Category::Fours;
+    if (s == "Fives")
+        return Category::Fives;
+    if (s == "Sixes")
+        return Category::Sixes;
+    if (s == "Pair")
+        return Category::Pair;
+    if (s == "TwoPair")
+        return Category::TwoPair;
+    if (s == "ThreePair")
+        return Category::ThreePair;
+    if (s == "ThreeKind")
+        return Category::ThreeKind;
+    if (s == "FourKind")
+        return Category::FourKind;
+    if (s == "FiveKind")
+        return Category::FiveKind;
+    if (s == "SmallStraight")
+        return Category::SmallStraight;
+    if (s == "LargeStraight")
+        return Category::LargeStraight;
+    if (s == "Straight")
+        return Category::Straight;
+    if (s == "House")
+        return Category::House;
+    if (s == "Villa")
+        return Category::Villa;
+    if (s == "Tower")
+        return Category::Tower;
+    if (s == "Chance")
+        return Category::Chance;
+    if (s == "MaxiYahtzee")
+        return Category::MaxiYahtzee;
+    if (s == "Count")
+        return Category::Count;
+
+    return Category::Count;
+}
+
 struct Player {
     array<optional<uint8_t>, (int)(Category::Count)> scores{};
-    int8_t rerolls = 2;
+    uint32_t scored_mask = (1 << (int)Category::Count) - 1;
+    uint8_t rerolls = 2;
 };
 
 struct CategoryEntry {
@@ -120,7 +187,12 @@ struct CategoryEntry {
     }
 };
 
-vector<CategoryEntry> dice_categories(array<uint8_t, 7> freq_arr) {
+struct CategoriesLookup {
+    vector<CategoryEntry> categories;
+    uint32_t category_mask;
+};
+
+CategoriesLookup dice_categories(array<uint8_t, 7> freq_arr) {
     vector<CategoryEntry> categories;
     for (int num = 1; num <= 6; num++) {
         uint8_t freq = freq_arr[num];
@@ -273,27 +345,40 @@ vector<CategoryEntry> dice_categories(array<uint8_t, 7> freq_arr) {
         entry.score = 100;
         categories.push_back(entry);
     }
-    return categories;
+    CategoriesLookup lookup;
+    lookup.categories = categories;
+    for (auto& entry : categories) {
+        lookup.category_mask |= 1 << (int)entry.category;
+    }
+    return lookup;
 }
 
-map<array<uint8_t, 7>, vector<CategoryEntry>> init_categories_by_dice() {
-    map<array<uint8_t, 7>, vector<CategoryEntry>> categories_by_dice;
+inline size_t freq_to_index(array<uint8_t, 7>& freq) {
+    return freq[0] + freq[1] * 7 + freq[2] * 49 + freq[3] * 343 + freq[4] * 2401 + freq[5] * 16807;
+}
+
+vector<CategoriesLookup> init_categories_by_dice_vec() {
+    vector<CategoriesLookup> categories_vec(117649); // +1 for safety
+
     // clang-format off
-    for (uint8_t a0 = 0; a0 <= 6; ++a0) {
-    for (uint8_t a1 = 0; a1 <= 6 - a0; ++a1) {
-    for (uint8_t a2 = 0; a2 <= 6 - a0 - a1; ++a2) {
-    for (uint8_t a3 = 0; a3 <= 6 - a0 - a1 - a2; ++a3) {
-    for (uint8_t a4 = 0; a4 <= 6 - a0 - a1 - a2 - a3; ++a4) {
-        uint8_t a5 = 6 - a0 - a1 - a2 - a3 - a4;
-        array<uint8_t, 7> freq_arr = {0, a0, a1, a2, a3, a4, a5};
-        vector<CategoryEntry> categories = dice_categories(freq_arr);
-        categories_by_dice.insert({freq_arr, categories});
+    for (uint8_t a1 = 0; a1 <= 6; ++a1) {
+    for (uint8_t a2 = 0; a2 <= 6 - a1; ++a2) {
+    for (uint8_t a3 = 0; a3 <= 6 - a1 - a2; ++a3) {
+    for (uint8_t a4 = 0; a4 <= 6 - a1 - a2 - a3; ++a4) {
+    for (uint8_t a5 = 0; a5 <= 6 - a1 - a2 - a3 - a4; ++a5) {
+        uint8_t a6 = 6 - a1 - a2 - a3 - a4 - a5;
+        array<uint8_t, 7> freq_arr = {0, a1, a2, a3, a4, a5, a6};
+        CategoriesLookup categories = dice_categories(freq_arr);
+        size_t index = freq_to_index(freq_arr);
+        categories_vec[index] = std::move(categories);
     } } } } }
     // clang-format on
-    return categories_by_dice;
+
+    return categories_vec;
 }
 
-thread_local map<array<uint8_t, 7>, vector<CategoryEntry>> categories_by_dice = init_categories_by_dice();
+thread_local static vector<CategoriesLookup> categories_by_dice_vec = init_categories_by_dice_vec();
+
 // thread_local array<uint8_t, 63> reroll_masks = []() {
 //     array<uint8_t, 63> masks;
 //     for (int i = 0; i < 63; i++) {
@@ -323,22 +408,27 @@ struct Dice {
         }
     }
 
-    vector<CategoryEntry>& categories() {
+    CategoriesLookup& categories() {
         array<uint8_t, 7> freq_arr{};
         for (uint8_t die : dice) {
             freq_arr[die] += 1;
         }
-        return categories_by_dice.at(freq_arr);
+        size_t index = freq_to_index(freq_arr);
+        return categories_by_dice_vec.at(index);
     }
 };
 
 struct Move {
     enum class Type { Reroll, Cross, Score } type;
-    union {
-        uint8_t reroll_mask = 0;
-        CategoryEntry score_entry;
-        uint8_t cross_i;
-    };
+    uint8_t reroll_mask = 0;
+    CategoryEntry score_entry;
+    uint8_t cross_i;
+
+    Move()
+        : score_entry() {}
+    // Move(string str) {
+    //     *this = from_string(str);
+    // }
 
     bool operator==(const Move& other) const {
         if (type != other.type)
@@ -369,20 +459,56 @@ struct Move {
                 bits[5 - i] = (reroll_mask & (1 << i)) ? '1' : '0';
             }
             bits[6] = '\0';
-            snprintf(buffer, sizeof(buffer), "REROLL: %s", bits);
+            snprintf(buffer, sizeof(buffer), "reroll %s", bits);
             break;
         }
         case Move::Type::Cross: {
-            snprintf(buffer, sizeof(buffer), "CROSS: %u", cross_i);
+            snprintf(buffer, sizeof(buffer), "cross %u", cross_i);
             break;
         }
         case Move::Type::Score: {
-            snprintf(buffer, sizeof(buffer), "SCORE: category=%s, score=%d", category_string(score_entry.category), score_entry.score);
+            snprintf(buffer, sizeof(buffer), "score %s %d", string_from_category(score_entry.category), score_entry.score);
             break;
         }
         }
 
         return buffer;
+    }
+
+    Move from_string(const std::string& input) {
+        std::istringstream iss(input);
+        std::string cmd, arg1, arg2;
+
+        iss >> cmd >> arg1;
+        if (cmd.empty() || arg1.empty())
+            throw std::invalid_argument("Invalid move format");
+
+        Move m;
+
+        if (cmd == "reroll") {
+            uint32_t mask = parse_uint(arg1);
+            if (mask > 0xFF)
+                throw std::out_of_range("Reroll mask must fit in uint8_t");
+
+            m.type = Move::Type::Reroll;
+            m.reroll_mask = static_cast<uint8_t>(mask);
+        } else if (cmd == "cross") {
+            uint32_t index = parse_uint(arg1);
+            if (index > 0xFF)
+                throw std::out_of_range("Cross index must fit in uint8_t");
+
+            m.type = Move::Type::Cross;
+            m.cross_i = static_cast<uint8_t>(index);
+        } else if (cmd == "score") {
+            iss >> arg2;
+            m.type = Move::Type::Score;
+            m.score_entry.category = category_from_string(arg1);
+            m.score_entry.score = parse_uint(arg2);
+        } else {
+            throw std::invalid_argument("Unknown move type: " + cmd);
+        }
+
+        return m;
     }
 };
 
@@ -401,7 +527,16 @@ struct Game {
         return rounds == (int)(Category::Count);
     }
     uint8_t winner() {
-        return 0;
+        vector<uint8_t> scores = vector<uint8_t>(players.size());
+        for (size_t i = 0; i < players.size(); i++) {
+            for (const auto& s : players[i].scores) {
+                if (s) {
+                    scores[i] += *s;
+                }
+            }
+        }
+        auto it = std::max_element(scores.begin(), scores.end());
+        return std::distance(scores.begin(), it);
     }
     Player& player() {
         return players[player_i];
@@ -419,18 +554,22 @@ struct Game {
         switch (move.type) {
         case Move::Type::Score: {
             CategoryEntry entry = move.score_entry;
-            player().scores[(int)(entry.category)] = entry.score;
+            size_t i = (size_t)entry.category;
+            player().scores[i] = entry.score;
+            player().scored_mask ^= 1 << i;
             next_player();
             break;
         }
         case Move::Type::Reroll: {
             uint8_t mask = move.reroll_mask;
             dice.reroll(mask);
+            player().rerolls--;
             break;
         }
         case Move::Type::Cross: {
             uint8_t i = move.cross_i;
             player().scores[i] = 0;
+            player().scored_mask ^= 1 << i;
             next_player();
             break;
         }
@@ -439,8 +578,8 @@ struct Game {
     uint8_t playout() {
         while (!is_terminal()) {
             if (fast_rand(2)) {
-                vector<CategoryEntry> categories = dice.categories();
-                CategoryEntry entry = categories[fast_rand(categories.size())];
+                CategoriesLookup lookup = dice.categories();
+                CategoryEntry entry = lookup.categories[fast_rand(lookup.categories.size())];
                 player().scores[(int)(entry.category)] = entry.score;
                 next_player();
             } else if (player().rerolls > 0) {
@@ -449,16 +588,7 @@ struct Game {
                 player().rerolls--;
             }
         }
-        vector<uint8_t> scores = vector<uint8_t>(players.size());
-        for (size_t i = 0; i < players.size(); i++) {
-            for (const auto& s : players[i].scores) {
-                if (s) {
-                    scores[i] += *s;
-                }
-            }
-        }
-        auto it = std::max_element(scores.begin(), scores.end());
-        return std::distance(scores.begin(), it);
+        return winner();
     }
 };
 
@@ -472,16 +602,25 @@ struct MCTSNode {
     uint32_t visits = 0;
     uint32_t wins = 0;
 
-    uint8_t fisher_i = 0;
     uint8_t rerolls_left = 32;
+    uint8_t fisher_i = 0;
 
     vector<CategoryEntry>* categories = nullptr;
+    uint32_t score_mask = 0;
+    uint32_t cross_mask = 0;
     bool rerolls_done = false;
-    bool categories_done = false;
+    optional<CategoryEntry> next_category;
 
     MCTSNode(Game game)
         : game(game) {
         player_i = game.player_i;
+
+        categories = &game.dice.categories().categories;
+        score_mask = game.dice.categories().category_mask & game.player().scored_mask;
+        cross_mask = game.player().scored_mask;
+        fisher_i = categories->size();
+
+        next_category = find_next_category();
     }
 
     double uct() const {
@@ -494,22 +633,18 @@ struct MCTSNode {
         return (double)wins / (double)visits + C * sqrt(log(parent->visits) / visits);
     }
 
-    bool is_leaf_node() {
-        return children.empty();
-    }
-
     bool is_terminal() {
         return game.is_terminal();
     }
 
-    bool is_fully_expanded() {
-        return rerolls_done && categories_done;
+    bool is_leaf_node() {
+        return cross_mask || (!rerolls_done && game.player().rerolls > 0) || next_category.has_value();
     }
 
     MCTSNode* select_child() {
         MCTSNode* current = this;
 
-        while (!current->is_leaf_node() && current->is_fully_expanded()) {
+        while (!current->is_leaf_node()){
             auto selected = max_element(current->children.begin(), current->children.end(), [](const unique_ptr<MCTSNode>& a, const unique_ptr<MCTSNode>& b) {
                 return a->uct() < b->uct();
             });
@@ -521,10 +656,6 @@ struct MCTSNode {
 
     MCTSNode* expand() {
         if (is_terminal()) {
-            return this;
-        }
-
-        if (is_fully_expanded()) {
             return this;
         }
 
@@ -560,30 +691,36 @@ struct MCTSNode {
 
     void run_iteration() {
         MCTSNode* leaf = select_child();
-        MCTSNode* node = leaf->is_fully_expanded() ? leaf : leaf->expand();
+        MCTSNode* node = leaf->expand();
         uint8_t winner = node->simulate();
         node->backpropagate(winner);
+    }
+
+    optional<CategoryEntry> find_next_category() {
+        while (fisher_i > 0) {
+            fisher_i--;
+
+            size_t i = fast_rand(fisher_i + 1);
+            swap(categories->at(i), categories->at(fisher_i));
+
+            CategoryEntry& entry = categories->at(fisher_i);
+            uint32_t bit = 1u << (uint32_t)entry.category;
+
+            if (score_mask & bit) {
+                return entry;
+            }
+        }
+        return std::nullopt;
     }
 
     Move next_move() {
         Move move;
 
-        if (!categories_done && fast_rand(2)) {
-            // Lazy fisher yates
-            if (categories == nullptr) {
-                categories = &game.dice.categories();
-                fisher_i = categories->size();
-                assert(fisher_i > 0 && "categories must not be empty");
-            }
-            fisher_i--;
-            categories_done = (fisher_i == 0);
-            size_t i = fast_rand(fisher_i + 1);
-            swap(categories->at(i), categories->at(fisher_i));
-            CategoryEntry entry = categories->at(fisher_i);
-
+        if (next_category.has_value()) {
             move.type = Move::Type::Score;
-            move.score_entry = entry;
+            move.score_entry = next_category.value();
 
+            next_category = find_next_category();
         } else if (!rerolls_done && game.player().rerolls > 0) {
             rerolls_left--;
             rerolls_done = (rerolls_left == 0);
@@ -592,10 +729,18 @@ struct MCTSNode {
 
             move.type = Move::Type::Reroll;
             move.reroll_mask = mask;
+        } else if (cross_mask) {
+            uint32_t i = random_set_bit(cross_mask);
+            if (i > 20) {
+                cout << "Hmmmm: " << cross_mask << endl;
+            }
+            move.type = Move::Type::Cross;
+            move.cross_i = i;
+            cross_mask ^= 1 << i;
         } else {
-            std::cout << "rerolls: " << rerolls_left << " fisher: " << fisher_i << " a " << rerolls_done << " b " << categories_done << '\n';
+            cerr << "panic: next_move found no move\n";
+            terminate();
         }
-
         return move;
     }
 
@@ -667,20 +812,13 @@ struct MCTSNode {
     }
 };
 
-int main() {
-    srand(static_cast<unsigned>(time(nullptr)));
-    rng_state = rand();
-
-    Game game = Game(3);
-    game.dice.dice = {6, 6, 6, 5, 5, 4};
-
-    int num_threads = thread::hardware_concurrency() / 2;
+Move run_mcts(Game game) {
+    unsigned int n_threads = std::thread::hardware_concurrency();
     vector<unique_ptr<MCTSNode>> thread_roots;
     vector<thread> threads;
 
-    auto duration = std::chrono::seconds(10);
-
-    for (int i = 0; i < num_threads; i++) {
+    auto duration = std::chrono::milliseconds(100);
+    for (uint i = 0; i < n_threads; i++) {
         thread_roots.push_back(make_unique<MCTSNode>(game));
         threads.push_back(thread([&, i]() {
             auto start = std::chrono::steady_clock::now();
@@ -696,7 +834,7 @@ int main() {
     }
 
     MCTSNode* total = thread_roots.back().get();
-    for (int i = 0; i < num_threads - 1; i++) {
+    for (uint i = 0; i < n_threads - 1; i++) {
         MCTSNode* root = thread_roots[i].get();
         total->visits += root->visits;
         total->wins += root->wins;
@@ -718,6 +856,88 @@ int main() {
         cout << node->to_string() << std::endl;
     }
 
-    // root.save_tree("mcts_tree.dot", 4);
-    // printf("View with: xdot mcts_tree.dot\n");
+    return total->children[0]->move.value();
+}
+
+void print_scores(const Game& game) {
+    cout << "================ SCOREBOARD ================\n";
+
+    for (size_t p = 0; p < game.players.size(); ++p) {
+        const Player& player = game.players[p];
+        int total = 0;
+
+        cout << "Player " << p << ":\n";
+        for (int c = 0; c < (int)Category::Count; ++c) {
+            cout << "  " << setw(15) << left << string_from_category((Category)c) << ": ";
+
+            if (player.scores[c]) {
+                cout << setw(3) << (int)*player.scores[c];
+                total += *player.scores[c];
+            } else {
+                cout << "---";
+            }
+            cout << '\n';
+        }
+
+        cout << "  ------------------------------\n";
+        cout << "  TOTAL: " << total << "\n\n";
+    }
+}
+
+void play_game(Game game) {
+    while (!game.is_terminal()) {
+        Move move = run_mcts(game);
+
+        // cout << "\nPlayer " << (int)game.player_i
+        //      << " plays: " << move.to_string() << "\n";
+
+        cout << "Player: " << (int)game.player_i << " " << move.to_string() << endl;
+        if (move.type != Move::Type::Reroll) {
+            cout << endl;
+        }
+
+        game.play_move(move);
+        print_scores(game);
+    }
+
+    printf("Winner: %d\n", game.winner());
+}
+
+void distribution() {
+    uint32_t mask = 0b10000000100000001000000010000000;
+    array<int, 32> freq_arr{};
+    for (int i = 0; i < 10000; i++) {
+        uint32_t j = random_set_bit(mask);
+        freq_arr[j]++;
+    }
+    for (int i = 0; i < 32; i++) {
+        cout << "i: " << i << " freq: " << freq_arr[i] << endl;
+    }
+}
+
+int main() {
+    srand(static_cast<unsigned>(time(nullptr)));
+    rng_state = rand();
+
+    Game game = Game(2);
+    game.dice.dice = {6, 3, 6, 5, 5, 4};
+
+    play_game(game);
+
+    //distribution();
+    //MCTSNode root = MCTSNode(game);
+    //for (int i = 0; i < 200; i++) {
+    //    root.run_iteration();
+    //}
+    //cout << root.children.size() << endl;
+
+    //std::sort(root.children.begin(), root.children.end(), [](const unique_ptr<MCTSNode>& a, const unique_ptr<MCTSNode>& b) {
+    //    return a->visits > b->visits;
+    //});
+
+    //for (auto& node : root.children) {
+    //    cout << node->to_string() << std::endl;
+    //}
+
+    //cout << root.children[0]->move.value().to_string() << endl;
 }
