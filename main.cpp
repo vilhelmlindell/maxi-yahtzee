@@ -20,17 +20,10 @@ using namespace std;
 
 thread_local uint32_t rng_state = 321321321;
 
-inline uint32_t xorshift32() {
-    uint32_t x = rng_state;
-    x ^= x << 13;
-    x ^= x >> 17;
-    x ^= x << 5;
-    rng_state = x;
-    return x;
-}
-
-inline uint32_t fast_rand(uint32_t max) {
-    return xorshift32() % max;
+inline uint8_t fast_rand(uint8_t max) {
+    rng_state = rng_state * 1664525u + 1013904223u;
+    uint32_t r = rng_state >> 26;
+    return (r * (max)) >> 6;
 }
 
 enum class Category : uint8_t {
@@ -57,7 +50,7 @@ enum class Category : uint8_t {
     Count,
 };
 
-inline const char* category_string(Category c) {
+inline const char *category_string(Category c) {
     switch (c) {
     case Category::Ones:
         return "Ones";
@@ -115,13 +108,14 @@ struct CategoryEntry {
     Category category = Category::Ones;
     uint8_t score = 0;
 
-    bool operator==(const CategoryEntry& other) const {
+    bool operator==(const CategoryEntry &other) const {
         return category == other.category && score == other.score;
     }
 };
 
 vector<CategoryEntry> dice_categories(array<uint8_t, 7> freq_arr) {
     vector<CategoryEntry> categories;
+    categories.reserve(20);
     for (int num = 1; num <= 6; num++) {
         uint8_t freq = freq_arr[num];
         if (freq != 0) {
@@ -166,7 +160,8 @@ vector<CategoryEntry> dice_categories(array<uint8_t, 7> freq_arr) {
     if (pairs.size() >= 3) {
         CategoryEntry entry;
         entry.category = Category::ThreePair;
-        entry.score = 2 * (pairs[pairs.size() - 1] + pairs[pairs.size() - 2] + pairs[pairs.size() - 3]);
+        entry.score = 2 * (pairs[pairs.size() - 1] + pairs[pairs.size() - 2] +
+                           pairs[pairs.size() - 3]);
         categories.push_back(entry);
     }
 
@@ -276,24 +271,33 @@ vector<CategoryEntry> dice_categories(array<uint8_t, 7> freq_arr) {
     return categories;
 }
 
-map<array<uint8_t, 7>, vector<CategoryEntry>> init_categories_by_dice() {
-    map<array<uint8_t, 7>, vector<CategoryEntry>> categories_by_dice;
-    // clang-format off
-    for (uint8_t a0 = 0; a0 <= 6; ++a0) {
-    for (uint8_t a1 = 0; a1 <= 6 - a0; ++a1) {
-    for (uint8_t a2 = 0; a2 <= 6 - a0 - a1; ++a2) {
-    for (uint8_t a3 = 0; a3 <= 6 - a0 - a1 - a2; ++a3) {
-    for (uint8_t a4 = 0; a4 <= 6 - a0 - a1 - a2 - a3; ++a4) {
-        uint8_t a5 = 6 - a0 - a1 - a2 - a3 - a4;
-        array<uint8_t, 7> freq_arr = {0, a0, a1, a2, a3, a4, a5};
-        vector<CategoryEntry> categories = dice_categories(freq_arr);
-        categories_by_dice.insert({freq_arr, categories});
-    } } } } }
-    // clang-format on
-    return categories_by_dice;
+inline size_t freq_to_index(const array<uint8_t, 7> &freq) {
+    return freq[0] + freq[1] * 7 + freq[2] * 49 + freq[3] * 343 +
+           freq[4] * 2401 + freq[5] * 16807;
 }
 
-thread_local map<array<uint8_t, 7>, vector<CategoryEntry>> categories_by_dice = init_categories_by_dice();
+vector<vector<CategoryEntry>> init_categories_by_dice_vec() {
+    vector<vector<CategoryEntry>> categories_vec(117649); // +1 for safety
+
+    // clang-format off
+    for (uint8_t a1 = 0; a1 <= 6; ++a1) {
+    for (uint8_t a2 = 0; a2 <= 6 - a1; ++a2) {
+    for (uint8_t a3 = 0; a3 <= 6 - a1 - a2; ++a3) {
+    for (uint8_t a4 = 0; a4 <= 6 - a1 - a2 - a3; ++a4) {
+    for (uint8_t a5 = 0; a5 <= 6 - a1 - a2 - a3 - a4; ++a5) {
+        uint8_t a6 = 6 - a1 - a2 - a3 - a4 - a5;
+        array<uint8_t, 7> freq_arr = {0, a1, a2, a3, a4, a5, a6};
+        vector<CategoryEntry> categories = dice_categories(freq_arr);
+        size_t index = freq_to_index(freq_arr);
+        categories_vec[index] = std::move(categories);
+    } } } } }
+    // clang-format on
+
+    return categories_vec;
+}
+
+static const vector<vector<CategoryEntry>> categories_by_dice_vec =
+    init_categories_by_dice_vec();
 // thread_local array<uint8_t, 63> reroll_masks = []() {
 //     array<uint8_t, 63> masks;
 //     for (int i = 0; i < 63; i++) {
@@ -306,9 +310,7 @@ thread_local map<array<uint8_t, 7>, vector<CategoryEntry>> categories_by_dice = 
 struct Dice {
     array<uint8_t, 6> dice{};
 
-    Dice() {
-        reroll();
-    }
+    Dice() { reroll(); }
 
     void reroll() {
         for (int i = 0; i < 6; i++) {
@@ -323,12 +325,13 @@ struct Dice {
         }
     }
 
-    vector<CategoryEntry>& categories() {
+    const vector<CategoryEntry> &categories() {
         array<uint8_t, 7> freq_arr{};
         for (uint8_t die : dice) {
             freq_arr[die] += 1;
         }
-        return categories_by_dice.at(freq_arr);
+        size_t index = freq_to_index(freq_arr);
+        return categories_by_dice_vec[index];
     }
 };
 
@@ -340,7 +343,9 @@ struct Move {
         uint8_t cross_i;
     };
 
-    bool operator==(const Move& other) const {
+    Move() : score_entry() {}
+
+    bool operator==(const Move &other) const {
         if (type != other.type)
             return false;
 
@@ -355,9 +360,7 @@ struct Move {
         return false;
     }
 
-    bool operator!=(const Move& other) const {
-        return !(*this == other);
-    }
+    bool operator!=(const Move &other) const { return !(*this == other); }
 
     string to_string() const {
         static char buffer[64];
@@ -377,7 +380,8 @@ struct Move {
             break;
         }
         case Move::Type::Score: {
-            snprintf(buffer, sizeof(buffer), "SCORE: category=%s, score=%d", category_string(score_entry.category), score_entry.score);
+            snprintf(buffer, sizeof(buffer), "SCORE: category=%s, score=%d",
+                     category_string(score_entry.category), score_entry.score);
             break;
         }
         }
@@ -397,15 +401,9 @@ struct Game {
             players.push_back(Player());
         }
     }
-    bool is_terminal() {
-        return rounds == (int)(Category::Count);
-    }
-    uint8_t winner() {
-        return 0;
-    }
-    Player& player() {
-        return players[player_i];
-    }
+    bool is_terminal() { return rounds == (int)(Category::Count); }
+    uint8_t winner() { return 0; }
+    Player &player() { return players[player_i]; }
     void next_player() {
         player_i++;
         if (player_i == players.size()) {
@@ -439,7 +437,7 @@ struct Game {
     uint8_t playout() {
         while (!is_terminal()) {
             if (fast_rand(2)) {
-                vector<CategoryEntry> categories = dice.categories();
+                const vector<CategoryEntry> &categories = dice.categories();
                 CategoryEntry entry = categories[fast_rand(categories.size())];
                 player().scores[(int)(entry.category)] = entry.score;
                 next_player();
@@ -451,7 +449,7 @@ struct Game {
         }
         vector<uint8_t> scores = vector<uint8_t>(players.size());
         for (size_t i = 0; i < players.size(); i++) {
-            for (const auto& s : players[i].scores) {
+            for (const auto &s : players[i].scores) {
                 if (s) {
                     scores[i] += *s;
                 }
@@ -465,7 +463,7 @@ struct Game {
 struct MCTSNode {
     Game game;
     vector<unique_ptr<MCTSNode>> children;
-    MCTSNode* parent = nullptr;
+    MCTSNode *parent = nullptr;
     optional<Move> move;
 
     uint8_t player_i = 0;
@@ -474,15 +472,13 @@ struct MCTSNode {
 
     uint8_t fisher_i = 0;
     uint8_t rerolls_left = 32;
-
-    vector<CategoryEntry>* categories = nullptr;
+    double cached_log_visits = 0.0;
+    uint32_t cached_visits_value = 0;
+    vector<CategoryEntry> categories;
     bool rerolls_done = false;
     bool categories_done = false;
 
-    MCTSNode(Game game)
-        : game(game) {
-        player_i = game.player_i;
-    }
+    MCTSNode(Game game) : game(game) { player_i = game.player_i; }
 
     double uct() const {
         if (visits == 0)
@@ -491,35 +487,38 @@ struct MCTSNode {
             return 0.0;
 
         const double C = 1.414;
-        return (double)wins / (double)visits + C * sqrt(log(parent->visits) / visits);
+
+        if (parent->cached_visits_value != parent->visits) {
+            parent->cached_log_visits = log(parent->visits);
+            parent->cached_visits_value = parent->visits;
+        }
+        return (double)wins / (double)visits +
+               C * sqrt(parent->cached_log_visits / visits);
     }
 
-    bool is_leaf_node() {
-        return children.empty();
-    }
+    bool is_leaf_node() { return children.empty(); }
 
-    bool is_terminal() {
-        return game.is_terminal();
-    }
+    bool is_terminal() { return game.is_terminal(); }
 
-    bool is_fully_expanded() {
-        return rerolls_done && categories_done;
-    }
+    bool is_fully_expanded() { return rerolls_done && categories_done; }
 
-    MCTSNode* select_child() {
-        MCTSNode* current = this;
+    MCTSNode *select_child() {
+        MCTSNode *current = this;
 
         while (!current->is_leaf_node() && current->is_fully_expanded()) {
-            auto selected = max_element(current->children.begin(), current->children.end(), [](const unique_ptr<MCTSNode>& a, const unique_ptr<MCTSNode>& b) {
-                return a->uct() < b->uct();
-            });
+            auto selected =
+                max_element(current->children.begin(), current->children.end(),
+                            [](const unique_ptr<MCTSNode> &a,
+                               const unique_ptr<MCTSNode> &b) {
+                                return a->uct() < b->uct();
+                            });
             current = selected->get();
         }
 
         return current;
     }
 
-    MCTSNode* expand() {
+    MCTSNode *expand() {
         if (is_terminal()) {
             return this;
         }
@@ -559,8 +558,8 @@ struct MCTSNode {
     }
 
     void run_iteration() {
-        MCTSNode* leaf = select_child();
-        MCTSNode* node = leaf->is_fully_expanded() ? leaf : leaf->expand();
+        MCTSNode *leaf = select_child();
+        MCTSNode *node = leaf->is_fully_expanded() ? leaf : leaf->expand();
         uint8_t winner = node->simulate();
         node->backpropagate(winner);
     }
@@ -570,16 +569,16 @@ struct MCTSNode {
 
         if (!categories_done && fast_rand(2)) {
             // Lazy fisher yates
-            if (categories == nullptr) {
-                categories = &game.dice.categories();
-                fisher_i = categories->size();
+            if (categories.empty()) {
+                categories = game.dice.categories();
+                fisher_i = categories.size();
                 assert(fisher_i > 0 && "categories must not be empty");
             }
             fisher_i--;
             categories_done = (fisher_i == 0);
             size_t i = fast_rand(fisher_i + 1);
-            swap(categories->at(i), categories->at(fisher_i));
-            CategoryEntry entry = categories->at(fisher_i);
+            swap(categories.at(i), categories.at(fisher_i));
+            CategoryEntry entry = categories.at(fisher_i);
 
             move.type = Move::Type::Score;
             move.score_entry = entry;
@@ -593,24 +592,29 @@ struct MCTSNode {
             move.type = Move::Type::Reroll;
             move.reroll_mask = mask;
         } else {
-            std::cout << "rerolls: " << rerolls_left << " fisher: " << fisher_i << " a " << rerolls_done << " b " << categories_done << '\n';
+            std::cout << "rerolls: " << rerolls_left << " fisher: " << fisher_i
+                      << " a " << rerolls_done << " b " << categories_done
+                      << '\n';
         }
 
         return move;
     }
 
-    MCTSNode* best_child() const {
+    MCTSNode *best_child() const {
         if (children.empty())
             return nullptr;
 
-        auto best = max_element(children.begin(), children.end(), [](const unique_ptr<MCTSNode>& a, const unique_ptr<MCTSNode>& b) {
-            return a->visits < b->visits;
-        });
+        auto best = max_element(
+            children.begin(), children.end(),
+            [](const unique_ptr<MCTSNode> &a, const unique_ptr<MCTSNode> &b) {
+                return a->visits < b->visits;
+            });
 
         return best->get();
     }
 
-    void write_dot(std::ofstream& out, int& node_id, int parent_id = -1, int max_depth = 3, int current_depth = 0) {
+    void write_dot(std::ofstream &out, int &node_id, int parent_id = -1,
+                   int max_depth = 3, int current_depth = 0) {
         int my_id = node_id++;
 
         double win_rate = visits > 0 ? (double)wins / visits : 0.0;
@@ -622,7 +626,9 @@ struct MCTSNode {
         if (visits > 10) {
             int r = (int)(255 * (1.0 - win_rate));
             int g = (int)(255 * win_rate);
-            out << " style=filled fillcolor=\"#" << std::hex << std::setfill('0') << std::setw(2) << r << std::setw(2) << g << "00" << std::dec << "\"";
+            out << " style=filled fillcolor=\"#" << std::hex
+                << std::setfill('0') << std::setw(2) << r << std::setw(2) << g
+                << "00" << std::dec << "\"";
         }
         out << "];\n";
 
@@ -631,13 +637,14 @@ struct MCTSNode {
         }
 
         if (current_depth < max_depth) {
-            for (auto& child : children) {
-                child->write_dot(out, node_id, my_id, max_depth, current_depth + 1);
+            for (auto &child : children) {
+                child->write_dot(out, node_id, my_id, max_depth,
+                                 current_depth + 1);
             }
         }
     }
 
-    void save_tree(const char* filename, int max_depth = 3) {
+    void save_tree(const char *filename, int max_depth = 3) {
         std::ofstream out(filename);
         out << "digraph MCTS {\n";
         out << "  rankdir=TB;\n";
@@ -654,8 +661,9 @@ struct MCTSNode {
 
         double winrate = visits > 0 ? (double)wins / (double)visits : 0.0;
 
-        oss << "Visits: " << visits << " | Wins: " << wins << " | Winrate: " << std::fixed << std::setprecision(4) << winrate << " | UCT: " << std::setprecision(4) << uct()
-            << " | ";
+        oss << "Visits: " << visits << " | Wins: " << wins
+            << " | Winrate: " << std::fixed << std::setprecision(4) << winrate
+            << " | UCT: " << std::setprecision(4) << uct() << " | ";
 
         if (move) {
             oss << "Move: " << move.value().to_string();
@@ -678,7 +686,7 @@ int main() {
     vector<unique_ptr<MCTSNode>> thread_roots;
     vector<thread> threads;
 
-    auto duration = std::chrono::seconds(10);
+    auto duration = std::chrono::seconds(1);
 
     for (int i = 0; i < num_threads; i++) {
         thread_roots.push_back(make_unique<MCTSNode>(game));
@@ -689,19 +697,19 @@ int main() {
             }
         }));
     }
-    for (auto& t : threads) {
+    for (auto &t : threads) {
         if (t.joinable()) {
             t.join();
         }
     }
 
-    MCTSNode* total = thread_roots.back().get();
+    MCTSNode *total = thread_roots.back().get();
     for (int i = 0; i < num_threads - 1; i++) {
-        MCTSNode* root = thread_roots[i].get();
+        MCTSNode *root = thread_roots[i].get();
         total->visits += root->visits;
         total->wins += root->wins;
-        for (auto& child : root->children) {
-            for (auto& total_child : total->children) {
+        for (auto &child : root->children) {
+            for (auto &total_child : total->children) {
                 if (child->move.value() == total_child->move.value()) {
                     total_child->visits += child->visits;
                     total_child->wins += child->wins;
@@ -710,11 +718,12 @@ int main() {
         }
     }
 
-    std::sort(total->children.begin(), total->children.end(), [](const unique_ptr<MCTSNode>& a, const unique_ptr<MCTSNode>& b) {
-        return a->visits > b->visits;
-    });
+    std::sort(total->children.begin(), total->children.end(),
+              [](const unique_ptr<MCTSNode> &a, const unique_ptr<MCTSNode> &b) {
+                  return a->visits > b->visits;
+              });
 
-    for (auto& node : total->children) {
+    for (auto &node : total->children) {
         cout << node->to_string() << std::endl;
     }
 
