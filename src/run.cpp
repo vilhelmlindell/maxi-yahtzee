@@ -1,23 +1,40 @@
-#include "run.hpp"
-#include "mcts.hpp"
+#include "run.h"
+#include "mcts.h"
 #include <iostream>
 #include <thread>
 
-#define GAME_COUNT 100
 #define THREAD_COUNT 8
 #define MILLISECONDS_PER_MOVE 1
 // #define PRINT_INFO
 
 uint64_t visits = 0;
 uint64_t milliseconds = 0;
+float average_score = 0;
 
-void run_games() {
-    float average_score = 0;
-    for (int i = 0; i < GAME_COUNT; i++) {
+void run_interface() {
+    int n;
+    while (true) {
+        std::cout << "Enter number of games (or Ctrl+D to quit): ";
+        if (!(std::cin >> n)) {
+            std::cout << "\nInput closed, exiting." << std::endl;
+            break; // Exit on EOF or invalid input
+        }
+
+        if (n <= 0) {
+            std::cerr << "Number of games must be positive." << std::endl;
+            continue; // Ask again
+        }
+
+        run_games(n);
+    }
+}
+
+void run_games(uint game_count) {
+    for (uint i = 0; i < game_count; i++) {
         Game game = Game(1);
         run_game(game);
-        float score = game.players[0].total_score();
-        average_score = average_score + (score - average_score) / (i + 1);
+        uint score = game.players[0].total_score();
+        average_score = average_score + ((float)score - average_score) / (i + 1);
         Game::score_to_beat = (uint8_t)average_score;
 
 #ifdef PRINT_INFO
@@ -27,6 +44,7 @@ void run_games() {
         std::cout << "Games played: " << i + 1 << std::endl << std::endl;
         uint64_t vps = (float)visits / ((float)milliseconds / 1000);
         std::cout << visits << " visits / " << milliseconds << " ms = " << vps << " vps" << std::endl;
+        std::cout << score << std::endl;
     }
 }
 

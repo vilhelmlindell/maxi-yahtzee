@@ -1,6 +1,6 @@
-#include "mcts.hpp"
-#include "game.hpp"
-#include "utils.hpp"
+#include "mcts.h"
+#include "game.h"
+#include "utils.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>

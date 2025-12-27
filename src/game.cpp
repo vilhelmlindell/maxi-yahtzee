@@ -1,5 +1,5 @@
-#include "game.hpp"
-#include "utils.hpp"
+#include "game.h"
+#include "utils.h"
 #include <algorithm>
 #include <cstdio>
 #include <iostream>
@@ -8,6 +8,7 @@
 #include <vector>
 #include <utility>
 #include <iomanip>
+#include <fstream>
 
 const char* category_to_string(Category c) {
     switch (c) {
@@ -342,7 +343,26 @@ size_t freq_to_index(std::array<uint8_t, 7>& freq) {
 }
 
 std::vector<CategoriesLookup> init_categories_by_dice_vec() {
-    std::vector<CategoriesLookup> categories_vec(117649); // +1 for safety
+    const std::string filename = "categories_by_dice.dat";
+    std::ifstream infile(filename, std::ios::binary);
+
+    if (infile.is_open()) {
+        size_t vector_size;
+        infile.read(reinterpret_cast<char*>(&vector_size), sizeof(vector_size));
+        std::vector<CategoriesLookup> categories_vec(vector_size);
+
+        for (auto& lookup : categories_vec) {
+            infile.read(reinterpret_cast<char*>(&lookup.category_mask), sizeof(lookup.category_mask));
+            size_t categories_size;
+            infile.read(reinterpret_cast<char*>(&categories_size), sizeof(categories_size));
+            lookup.categories.resize(categories_size);
+            infile.read(reinterpret_cast<char*>(lookup.categories.data()), categories_size * sizeof(CategoryEntry));
+        }
+        infile.close();
+        return categories_vec;
+    }
+
+    std::vector<CategoriesLookup> categories_vec(117649);
 
     // clang-format off
     for (uint8_t a1 = 0; a1 <= 6; ++a1) {
@@ -357,6 +377,20 @@ std::vector<CategoriesLookup> init_categories_by_dice_vec() {
         categories_vec[index] = std::move(categories);
     } } } } }
     // clang-format on
+
+    std::ofstream outfile(filename, std::ios::binary);
+    if (outfile.is_open()) {
+        size_t vector_size = categories_vec.size();
+        outfile.write(reinterpret_cast<const char*>(&vector_size), sizeof(vector_size));
+
+        for (const auto& lookup : categories_vec) {
+            outfile.write(reinterpret_cast<const char*>(&lookup.category_mask), sizeof(lookup.category_mask));
+            size_t categories_size = lookup.categories.size();
+            outfile.write(reinterpret_cast<const char*>(&categories_size), sizeof(categories_size));
+            outfile.write(reinterpret_cast<const char*>(lookup.categories.data()), categories_size * sizeof(CategoryEntry));
+        }
+        outfile.close();
+    }
 
     return categories_vec;
 }

@@ -1,4 +1,4 @@
-#include "utils.hpp"
+#include "utils.h"
 #include <cstdlib>
 #include <stdexcept>
 
@@ -14,7 +14,7 @@ uint32_t xorshift32() {
 }
 
 uint32_t fast_rand(uint32_t max) {
-    return xorshift32() % max;
+    return ((uint64_t)xorshift32() * max) >> 32;
 }
 
 uint32_t random_set_bit(uint32_t x) {
