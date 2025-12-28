@@ -16,14 +16,14 @@ struct MCTSNode {
     uint32_t visits = 0;
     uint32_t wins = 0;
 
-    uint8_t rerolls_left = 32;
     uint8_t fisher_i = 0;
 
     std::vector<CategoryEntry>* categories = nullptr;
     uint32_t score_mask = 0;
     uint32_t cross_mask = 0;
-    bool rerolls_done = false;
     std::optional<CategoryEntry> next_category;
+
+    uint64_t reroll_rng_mask = 0xFFFFFFFFFFFFFFFF;
 
     MCTSNode(Game game);
 

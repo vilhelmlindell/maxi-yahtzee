@@ -38,7 +38,7 @@ bool MCTSNode::is_terminal() {
 }
 
 bool MCTSNode::is_leaf_node() {
-    return cross_mask || (!rerolls_done && game.player().rerolls > 0) || next_category.has_value() || is_terminal();
+    return cross_mask || (reroll_rng_mask && game.player().rerolls > 0) || next_category.has_value() || is_terminal();
 }
 
 MCTSNode* MCTSNode::select_child() {
@@ -121,16 +121,15 @@ Move MCTSNode::next_move() {
         move.score_entry = next_category.value();
 
         next_category = find_next_category();
-    } else if (!rerolls_done && game.player().rerolls > 0) {
-        rerolls_left--;
-        rerolls_done = (rerolls_left == 0);
-
-        uint8_t mask = fast_rand(63) + 1;
+    } else if (reroll_rng_mask && game.player().rerolls > 0) {
+        uint8_t i = random_set_bit_u64(reroll_rng_mask);
 
         move.type = Move::Type::Reroll;
-        move.reroll_mask = mask;
+        move.reroll_mask = i;
+
+        reroll_rng_mask ^= 1 << i;
     } else if (cross_mask) {
-        uint32_t i = random_set_bit(cross_mask);
+        uint32_t i = random_set_bit_u32(cross_mask);
         if (i > 20) {
             std::cout << "Hmmmm: " << cross_mask << std::endl;
         }

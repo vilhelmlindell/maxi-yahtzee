@@ -78,7 +78,7 @@ struct Move {
 };
 
 struct Game {
-    inline static uint8_t score_to_beat = 200;
+    inline static uint score_to_beat = 200;
     std::vector<Player> players;
     uint8_t player_i = 0;
     uint8_t rounds = 0;
