@@ -2,19 +2,19 @@
 #include <cstdlib>
 #include <stdexcept>
 
-thread_local uint32_t rng_state = 321321321;
+thread_local uint8_t rng_state = 167;
 
-uint32_t xorshift32() {
-    uint32_t x = rng_state;
-    x ^= x << 13;
-    x ^= x >> 17;
-    x ^= x << 5;
-    rng_state = x;
-    return x;
+static uint8_t rng_mul(void) {
+    return rng_state++ * 29;
 }
 
-uint32_t fast_rand(uint32_t max) {
-    return ((uint64_t)xorshift32() * max) >> 32;
+//static uint8_t rng_add(void) {
+//    rng_3 += 29;
+//    return rng_3;
+//}
+
+uint8_t fast_rand(uint8_t max) {
+    return ((uint16_t)rng_mul() * max) >> 8;
 }
 
 uint32_t random_set_bit(uint32_t x) {

@@ -44,7 +44,7 @@ void run_games(uint game_count) {
         std::cout << "Games played: " << i + 1 << std::endl << std::endl;
         uint64_t vps = (float)visits / ((float)milliseconds / 1000);
         std::cout << visits << " visits / " << milliseconds << " ms = " << vps << " vps" << std::endl;
-        std::cout << score << std::endl;
+        std::cout << score << " " << vps << std::endl;
     }
 }
 
