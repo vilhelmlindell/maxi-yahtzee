@@ -8,11 +8,6 @@ static uint8_t rng(void) {
     return rng_state++ * 29;
 }
 
-//static uint8_t rng_add(void) {
-//    rng_3 += 29;
-//    return rng_3;
-//}
-
 uint8_t fast_rand(uint8_t max) {
     return ((uint16_t)rng() * max) >> 8;
 }
