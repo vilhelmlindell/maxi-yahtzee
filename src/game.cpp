@@ -1,14 +1,19 @@
 #include "game.h"
+#include "lookup.h"
 #include "utils.h"
 #include <algorithm>
+#include <cassert>
+#include <chrono>
+#include <cmath>
 #include <cstdio>
+#include <fstream>
+#include <iomanip>
 #include <iostream>
+#include <random>
 #include <sstream>
 #include <stdexcept>
-#include <vector>
 #include <utility>
-#include <iomanip>
-#include <fstream>
+#include <vector>
 
 const char* category_to_string(Category c) {
     switch (c) {
@@ -106,94 +111,89 @@ Category category_from_string(std::string_view s) {
     return Category::Count;
 }
 
-uint8_t Player::total_score() {
-    uint8_t sum = 0;
-    for (const auto& s : scores) {
-        if (s) {
-            sum += *s;
-        }
+bool is_bonus_category(Category c) {
+    return (int)c >= (int)Category::Threes && (int)c <= (int)Category::Sixes;
+}
+
+int Player::total_score() {
+    int sum = 0;
+    int i = 0;
+    for (; i < 6; i++) {
+        sum += *scores[i];
+    }
+    if (sum >= 75) {
+        sum += 50;
+    }
+    for (; i < (int)Category::Count; i++) {
+        sum += *scores[i];
     }
     return sum;
 }
 
-bool CategoryEntry::operator==(const CategoryEntry& other) const {
-    return category == other.category && score == other.score;
+std::string Reroll::to_string() {
+    std::ostringstream oss;
+    for (int i = 0; i < 6; i++) {
+        oss << (int)hold_freq[i] << " ";
+    }
+    return oss.str();
 }
 
-thread_local static std::vector<CategoriesLookup> categories_by_dice_vec = init_categories_by_dice_vec();
+Dice::Dice(std::array<uint8_t, 6> dice_freq) {
+    this->dice_freq = dice_freq;
+}
 
 Dice::Dice() {
-    reroll();
+    reroll_all();
 }
 
-void Dice::reroll() {
+void Dice::reroll_all() {
+    dice_freq.fill(0);
     for (int i = 0; i < 6; i++) {
-        dice[i] = (fast_rand(6)) + 1;
+        dice_freq[rand() % 6]++;
     }
 }
 
-void Dice::reroll(uint8_t mask) {
+void Dice::reroll(Reroll const& reroll) {
+    dice_freq = reroll.hold_freq;
+    int num_rolls = reroll.num_rolls;
+    while (num_rolls > 0) {
+        dice_freq[rand() % 6]++;
+        num_rolls--;
+    }
+}
+
+std::string Dice::to_string() {
+    std::ostringstream oss;
+
     for (int i = 0; i < 6; i++) {
-        if (mask & (1 << i)) {
-            dice[i] = (fast_rand(6)) + 1;
-        }
+        oss << (int)dice_freq[i] << " ";
     }
+    return oss.str();
 }
 
-CategoriesLookup& Dice::categories() {
-    std::array<uint8_t, 7> freq_arr{};
-    for (uint8_t die : dice) {
-        freq_arr[die] += 1;
-    }
-    size_t index = freq_to_index(freq_arr);
-    return categories_by_dice_vec.at(index);
-}
+Move::Move() {}
+//    , cross_i(Category::Twos) {}
 
-Move::Move() : type(Type::Reroll), reroll_mask(0), score_entry(), cross_i(0) {}
-
-bool Move::operator==(const Move& other) const {
-    if (type != other.type)
-        return false;
-
-    switch (type) {
-    case Type::Reroll:
-        return reroll_mask == other.reroll_mask;
-    case Type::Cross:
-        return cross_i == other.cross_i;
-    case Type::Score:
-        return score_entry == other.score_entry;
-    }
-    return false;
-}
-
-bool Move::operator!=(const Move& other) const {
-    return !(*this == other);
-}
-
-std::string Move::to_string() const {
-    static char buffer[64];
+std::string Move::to_string() {
+    std::ostringstream oss;
 
     switch (type) {
     case Move::Type::Reroll: {
-        char bits[7];
-        for (int i = 5; i >= 0; i--) {
-            bits[5 - i] = (reroll_mask & (1 << i)) ? '1' : '0';
-        }
-        bits[6] = '\0';
-        snprintf(buffer, sizeof(buffer), "reroll %s", bits);
+        oss << "reroll " << reroll.to_string();
         break;
     }
     case Move::Type::Cross: {
-        snprintf(buffer, sizeof(buffer), "cross %u", cross_i);
+        oss << "cross " << category_to_string(crossed_category);
         break;
     }
     case Move::Type::Score: {
-        snprintf(buffer, sizeof(buffer), "score %s %d", category_to_string(score_entry.category), score_entry.score);
+        oss << "score " << category_to_string(score_entry.category) << " " << (int)score_entry.score;
+        // snprintf(buffer, sizeof(buffer), "score %s %d", category_to_string(score_entry.category), score_entry.score);
         break;
     }
     }
 
-    return buffer;
+    return oss.str();
 }
 
 Move Move::from_string(const std::string& input) {
@@ -212,14 +212,15 @@ Move Move::from_string(const std::string& input) {
             throw std::out_of_range("Reroll mask must fit in uint8_t");
 
         m.type = Move::Type::Reroll;
-        m.reroll_mask = static_cast<uint8_t>(mask);
+        // TODO: Finish
+        // m.reroll_mask = static_cast<uint8_t>(mask);
     } else if (cmd == "cross") {
         uint32_t index = parse_uint(arg1);
         if (index > 0xFF)
             throw std::out_of_range("Cross index must fit in uint8_t");
 
         m.type = Move::Type::Cross;
-        m.cross_i = static_cast<uint8_t>(index);
+        m.crossed_category = (Category)index;
     } else if (cmd == "score") {
         iss >> arg2;
         m.type = Move::Type::Score;
@@ -265,7 +266,7 @@ void Game::next_player() {
         player_i = 0;
         rounds++;
     }
-    dice.reroll();
+    dice.reroll_all();
     player().rerolls += 2;
 }
 
@@ -276,17 +277,20 @@ void Game::play_move(Move move) {
         size_t i = (size_t)entry.category;
         player().scores[i] = entry.score;
         player().scored_mask ^= 1 << i;
+        if ((int)entry.category >= (int)Category::Ones && (int)entry.category <= (int)Category::Sixes) {
+            player().bonus_progress += entry.score;
+        }
         next_player();
         break;
     }
     case Move::Type::Reroll: {
-        uint8_t mask = move.reroll_mask;
-        dice.reroll(mask);
+        Reroll reroll = move.reroll;
+        dice.reroll(reroll);
         player().rerolls--;
         break;
     }
     case Move::Type::Cross: {
-        uint8_t i = move.cross_i;
+        int i = (int)move.crossed_category;
         player().scores[i] = 0;
         player().scored_mask ^= 1 << i;
         next_player();
@@ -295,20 +299,59 @@ void Game::play_move(Move move) {
     }
 }
 
-uint8_t Game::playout() {
+void Game::playout() {
     while (!is_terminal()) {
-        if (fast_rand(2)) {
-            CategoriesLookup lookup = dice.categories();
-            CategoryEntry entry = lookup.categories[fast_rand(lookup.categories.size())];
-            player().scores[(int)(entry.category)] = entry.score;
+        DiceLookup& lookup = get_dice_lookup(dice);
+        // std::cout << dice.to_string() << std::endl;
+        // Move move;
+        uint32_t combined = lookup.category_mask & player().scored_mask;
+
+        if (lookup.categories.size() >= 1 && fast_rand(2)) {
+            int start = fast_rand(1 + lookup.categories.size() / 3);
+            //int start = 0;
+
+            std::optional<uint8_t> i = next_valid_category(lookup, combined, start);
+            if (!i.has_value()) {
+                break;
+            }
+
+            CategoryEntry category = lookup.categories[i.value()];
+
+            player().scores[(int)category.category] = category.score;
+            player().scored_mask ^= (int)category.category;
+            if ((int)category.category >= (int)Category::Ones && (int)category.category <= (int)Category::Sixes) {
+                player().bonus_progress += category.score;
+            }
             next_player();
-        } else if (player().rerolls > 0) {
-            uint8_t mask = fast_rand((1 << 6) - 1) + 1;
-            dice.reroll(mask);
-            player().rerolls--;
+            continue;
         }
+
+        if (player().rerolls > 0) {
+            //Reroll reroll = get_best_reroll(dice, player().scored_mask);
+            Reroll reroll = lookup.rerolls[0];
+            dice.reroll(reroll);
+            player().rerolls--;
+        } else {
+            const uint32_t never_cross = ~0b10000000000000111100;
+            uint32_t i;
+            if (player().scored_mask & never_cross) {
+                i = (int)worst_category(player().scored_mask & never_cross);
+            } else {
+                i = (int)worst_category(player().scored_mask);
+            }
+            player().scored_mask ^= 1 << i;
+            player().scores[i] = 0;
+            next_player();
+        }
+
+        // move.type = Move::Type::Cross;
+        // move.crossed_category = (Category)i;
+        // move.type = Move::Type::Reroll;
+        // move.reroll = lookup.rerolls[0];
+        // std::cout << move.to_string() << std::endl;
+
+        // std::cout << scores_string() << std::endl;
     }
-    return winner();
 }
 
 std::string Game::scores_string() {
@@ -336,222 +379,4 @@ std::string Game::scores_string() {
         oss << "  TOTAL: " << total << "\n\n";
     }
     return oss.str();
-}
-
-size_t freq_to_index(std::array<uint8_t, 7>& freq) {
-    return freq[0] + freq[1] * 7 + freq[2] * 49 + freq[3] * 343 + freq[4] * 2401 + freq[5] * 16807;
-}
-
-std::vector<CategoriesLookup> init_categories_by_dice_vec() {
-    const std::string filename = "categories_by_dice.dat";
-    std::ifstream infile(filename, std::ios::binary);
-
-    if (infile.is_open()) {
-        size_t vector_size;
-        infile.read(reinterpret_cast<char*>(&vector_size), sizeof(vector_size));
-        std::vector<CategoriesLookup> categories_vec(vector_size);
-
-        for (auto& lookup : categories_vec) {
-            infile.read(reinterpret_cast<char*>(&lookup.category_mask), sizeof(lookup.category_mask));
-            size_t categories_size;
-            infile.read(reinterpret_cast<char*>(&categories_size), sizeof(categories_size));
-            lookup.categories.resize(categories_size);
-            infile.read(reinterpret_cast<char*>(lookup.categories.data()), categories_size * sizeof(CategoryEntry));
-        }
-        infile.close();
-        return categories_vec;
-    }
-
-    std::vector<CategoriesLookup> categories_vec(117649);
-
-    // clang-format off
-    for (uint8_t a1 = 0; a1 <= 6; ++a1) {
-    for (uint8_t a2 = 0; a2 <= 6 - a1; ++a2) {
-    for (uint8_t a3 = 0; a3 <= 6 - a1 - a2; ++a3) {
-    for (uint8_t a4 = 0; a4 <= 6 - a1 - a2 - a3; ++a4) {
-    for (uint8_t a5 = 0; a5 <= 6 - a1 - a2 - a3 - a4; ++a5) {
-        uint8_t a6 = 6 - a1 - a2 - a3 - a4 - a5;
-        std::array<uint8_t, 7> freq_arr = {0, a1, a2, a3, a4, a5, a6};
-        CategoriesLookup categories = dice_categories(freq_arr);
-        size_t index = freq_to_index(freq_arr);
-        categories_vec[index] = std::move(categories);
-    } } } } }
-    // clang-format on
-
-    std::ofstream outfile(filename, std::ios::binary);
-    if (outfile.is_open()) {
-        size_t vector_size = categories_vec.size();
-        outfile.write(reinterpret_cast<const char*>(&vector_size), sizeof(vector_size));
-
-        for (const auto& lookup : categories_vec) {
-            outfile.write(reinterpret_cast<const char*>(&lookup.category_mask), sizeof(lookup.category_mask));
-            size_t categories_size = lookup.categories.size();
-            outfile.write(reinterpret_cast<const char*>(&categories_size), sizeof(categories_size));
-            outfile.write(reinterpret_cast<const char*>(lookup.categories.data()), categories_size * sizeof(CategoryEntry));
-        }
-        outfile.close();
-    }
-
-    return categories_vec;
-}
-
-CategoriesLookup dice_categories(std::array<uint8_t, 7> freq_arr) {
-    std::vector<CategoryEntry> categories;
-    for (int num = 1; num <= 6; num++) {
-        uint8_t freq = freq_arr[num];
-        if (freq != 0) {
-            CategoryEntry entry;
-            entry.category = (Category)(num - 1);
-            entry.score = freq * num;
-            categories.push_back(entry);
-        }
-    }
-
-    std::vector<int> pairs;
-    std::vector<int> threes;
-    int four_kind = 0;
-    int five_kind = 0;
-
-    for (int num = 1; num <= 6; num++) {
-        uint8_t freq = freq_arr[num];
-        if (freq >= 2)
-            pairs.push_back(num);
-        if (freq >= 3)
-            threes.push_back(num);
-        if (freq >= 4)
-            four_kind = num;
-        if (freq >= 5)
-            five_kind = num;
-    }
-
-    if (!pairs.empty()) {
-        CategoryEntry entry;
-        entry.category = Category::Pair;
-        entry.score = 2 * pairs.back();
-        categories.push_back(entry);
-    }
-
-    if (pairs.size() >= 2) {
-        CategoryEntry entry;
-        entry.category = Category::TwoPair;
-        entry.score = 2 * pairs[pairs.size() - 1] + 2 * pairs[pairs.size() - 2];
-        categories.push_back(entry);
-    }
-
-    if (pairs.size() >= 3) {
-        CategoryEntry entry;
-        entry.category = Category::ThreePair;
-        entry.score = 2 * (pairs[pairs.size() - 1] + pairs[pairs.size() - 2] + pairs[pairs.size() - 3]);
-        categories.push_back(entry);
-    }
-
-    if (!threes.empty()) {
-        CategoryEntry entry;
-        entry.category = Category::ThreeKind;
-        entry.score = 3 * threes.back();
-        categories.push_back(entry);
-    }
-
-    if (four_kind > 0) {
-        CategoryEntry entry;
-        entry.category = Category::FourKind;
-        entry.score = 4 * four_kind;
-        categories.push_back(entry);
-    }
-
-    if (five_kind > 0) {
-        CategoryEntry entry;
-        entry.category = Category::FiveKind;
-        entry.score = 5 * five_kind;
-        categories.push_back(entry);
-    }
-
-    int consecutive = 0;
-    int max_consecutive = 0;
-    for (int num = 1; num <= 6; num++) {
-        if (freq_arr[num] > 0) {
-            consecutive++;
-            max_consecutive = std::max(max_consecutive, consecutive);
-        } else {
-            consecutive = 0;
-        }
-    }
-
-    if (max_consecutive >= 4) {
-        CategoryEntry entry;
-        entry.category = Category::SmallStraight;
-        entry.score = 30;
-        categories.push_back(entry);
-    }
-
-    if (max_consecutive >= 5) {
-        CategoryEntry entry;
-        entry.category = Category::LargeStraight;
-        entry.score = 40;
-        categories.push_back(entry);
-    }
-
-    if (max_consecutive == 6) {
-        CategoryEntry entry;
-        entry.category = Category::Straight;
-        entry.score = 50;
-        categories.push_back(entry);
-    }
-
-    if (threes.size() >= 1 && pairs.size() >= 2) {
-        CategoryEntry entry;
-        entry.category = Category::House;
-        int sum = 0;
-        for (int num = 1; num <= 6; num++) {
-            sum += freq_arr[num] * num;
-        }
-        entry.score = sum;
-        categories.push_back(entry);
-    }
-
-    if (threes.size() >= 2) {
-        CategoryEntry entry;
-        entry.category = Category::Villa;
-        int sum = 0;
-        for (int num = 1; num <= 6; num++) {
-            sum += freq_arr[num] * num;
-        }
-        entry.score = sum;
-        categories.push_back(entry);
-    }
-
-    if (four_kind > 0 && pairs.size() >= 2) {
-        CategoryEntry entry;
-        entry.category = Category::Tower;
-        int sum = 0;
-        for (int num = 1; num <= 6; num++) {
-            sum += freq_arr[num] * num;
-        }
-        entry.score = sum;
-        categories.push_back(entry);
-    }
-
-    {
-        CategoryEntry entry;
-        entry.category = Category::Chance;
-        int sum = 0;
-        for (int num = 1; num <= 6; num++) {
-            sum += freq_arr[num] * num;
-        }
-        entry.score = sum;
-        categories.push_back(entry);
-    }
-
-    if (five_kind > 0 && freq_arr[five_kind] == 6) {
-        CategoryEntry entry;
-        entry.category = Category::MaxiYahtzee;
-        entry.score = 100;
-        categories.push_back(entry);
-    }
-    CategoriesLookup lookup;
-    lookup.categories = categories;
-    for (auto& entry : categories) {
-        lookup.category_mask |= 1 << (int)entry.category;
-    }
-    return lookup;
 }

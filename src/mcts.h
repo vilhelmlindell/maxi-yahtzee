@@ -2,46 +2,61 @@
 #define MCTS_HPP
 
 #include "game.h"
+#include "lookup.h"
 #include <fstream>
+#include <limits>
 #include <memory>
 #include <vector>
 
+#define MAXIMIZE_AVERAGE_SCORE
+
 struct MCTSNode {
     Game game;
-    std::vector<std::unique_ptr<MCTSNode>> children;
+
     MCTSNode* parent = nullptr;
+    std::vector<std::unique_ptr<MCTSNode>> children;
     std::optional<Move> move;
-
-    uint8_t player_i = 0;
     uint32_t visits = 0;
+    uint8_t player_i = 0;
+    //std::vector<std::pair<uint8_t, float>> categories;
+
+    DiceLookup* lookup;
+
+    //double cached_ucb1 = 0;
+    double cached_log_visits = 0;
+    uint64_t cached_visits = 0;
+
+
+#ifdef MAXIMIZE_AVERAGE_SCORE
+    uint64_t total_score = 0;
+#else
     uint32_t wins = 0;
+#endif
 
-    uint8_t fisher_i = 0;
+    std::optional<uint8_t> category_i = 0;
 
-    std::vector<CategoryEntry>* categories = nullptr;
     uint32_t score_mask = 0;
     uint32_t cross_mask = 0;
-    std::optional<CategoryEntry> next_category;
-
-    uint64_t reroll_rng_mask = 0xFFFFFFFFFFFFFFFF;
+    uint8_t reroll_i = 0;
 
     MCTSNode(Game game);
 
-    double uct() const;
+    double compute_ucb1_reward();
+    double ucb1();
     bool is_terminal();
     bool is_leaf_node();
+    bool rerolls_left();
+    bool categories_left();
+    bool crosses_left();
     MCTSNode* select_child();
     MCTSNode* expand();
     uint8_t simulate();
-    void backpropagate(uint8_t winner);
+    void backpropagate(Game& sim_game, uint8_t total_score);
     void run_iteration();
-    std::optional<CategoryEntry> find_next_category();
     Move next_move();
     MCTSNode* best_child() const;
     std::string node_string();
     std::string children_string();
-    void write_dot(std::ofstream& out, int& node_id, int parent_id = -1, int max_depth = 3, int current_depth = 0);
-    void save_tree(const char* filename, int max_depth = 3);
 };
 
 #endif // MCTS_HPP

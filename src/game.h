@@ -34,47 +34,52 @@ enum class Category : uint8_t {
 
 const char* category_to_string(Category c);
 Category category_from_string(std::string_view s);
+bool is_bonus_category(Category c);
 
 struct Player {
     std::array<std::optional<uint8_t>, (int)(Category::Count)> scores{};
+    uint8_t bonus_progress = 0;
     uint32_t scored_mask = (1 << (int)Category::Count) - 1;
     uint8_t rerolls = 2;
 
-    uint8_t total_score();
+    int total_score();
 };
 
 struct CategoryEntry {
     Category category = Category::Ones;
     uint8_t score = 0;
 
-    bool operator==(const CategoryEntry& other) const;
+    bool operator==(const CategoryEntry&) const = default;
 };
 
-struct CategoriesLookup {
-    std::vector<CategoryEntry> categories;
-    uint32_t category_mask = 0;
+struct Reroll {
+    std::array<uint8_t, 6> hold_freq{};
+    uint8_t num_rolls = 0;
+
+    bool operator==(const Reroll&) const = default;
+    std::string to_string();
 };
 
 struct Dice {
-    std::array<uint8_t, 6> dice{};
+    std::array<uint8_t, 6> dice_freq{};
 
     Dice();
-    void reroll();
-    void reroll(uint8_t mask);
-    CategoriesLookup& categories();
+    Dice(std::array<uint8_t, 6> dice_freq);
+    void reroll_all();
+    void reroll(Reroll const& reroll);
+    std::string to_string();
 };
 
 struct Move {
     enum class Type { Reroll, Cross, Score } type;
-    uint8_t reroll_mask = 0;
+    Reroll reroll;
     CategoryEntry score_entry;
-    uint8_t cross_i;
+    Category crossed_category;
 
     Move();
-    bool operator==(const Move& other) const;
-    bool operator!=(const Move& other) const;
-    std::string to_string() const;
-    static Move from_string(const std::string& input);
+    std::string to_string();
+    Move from_string(const std::string& input);
+    bool operator==(const Move&) const = default;
 };
 
 struct Game {
@@ -90,12 +95,8 @@ struct Game {
     Player& player();
     void next_player();
     void play_move(Move move);
-    uint8_t playout();
+    void playout();
     std::string scores_string();
 };
-
-std::vector<CategoriesLookup> init_categories_by_dice_vec();
-CategoriesLookup dice_categories(std::array<uint8_t, 7> freq_arr);
-size_t freq_to_index(std::array<uint8_t, 7>& freq);
 
 #endif // GAME_HPP
