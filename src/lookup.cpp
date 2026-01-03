@@ -48,7 +48,7 @@ static void save_binary(const std::string& filename, bool is_mask_table = false)
             if (vec_size > 0) {
                 ofs.write(reinterpret_cast<const char*>(entry.categories.data()), vec_size * sizeof(CategoryEntry));
             }
-            ofs.write(reinterpret_cast<const char*>(entry.rerolls.data()), entry.rerolls.size() * sizeof(Reroll));
+            ofs.write(reinterpret_cast<const char*>(entry.sorted_rerolls.data()), entry.sorted_rerolls.size() * sizeof(Reroll));
             ofs.write(reinterpret_cast<const char*>(&entry.category_mask), sizeof(entry.category_mask));
         }
     }
@@ -77,7 +77,7 @@ static bool load_binary(const std::string& filename, bool is_mask_table = false)
             if (vec_size > 0) {
                 ifs.read(reinterpret_cast<char*>(entry.categories.data()), vec_size * sizeof(CategoryEntry));
             }
-            ifs.read(reinterpret_cast<char*>(entry.rerolls.data()), entry.rerolls.size() * sizeof(Reroll));
+            ifs.read(reinterpret_cast<char*>(entry.sorted_rerolls.data()), entry.sorted_rerolls.size() * sizeof(Reroll));
             ifs.read(reinterpret_cast<char*>(&entry.category_mask), sizeof(entry.category_mask));
         }
     }
@@ -158,7 +158,7 @@ static Reroll compute_best_reroll(Dice dice, uint32_t mask) {
         }
         if (score > best_score) {
             best_score = score;
-            best = lookup.rerolls[i];
+            best = lookup.sorted_rerolls[i];
         }
     }
     return best;
@@ -294,7 +294,7 @@ static void init_ev(std::array<uint8_t, 6>& dice_freq, DiceLookup& lookup) {
     });
 
     for (std::size_t i = 0; i < reroll_ev_sums.size(); ++i) {
-        lookup.rerolls[i] = std::get<0>(reroll_ev_sums[i]);
+        lookup.sorted_rerolls[i] = std::get<0>(reroll_ev_sums[i]);
         lookup.reroll_category_evs[i] = std::get<2>(reroll_ev_sums[i]);
     }
 }
@@ -469,6 +469,7 @@ void init_dice_lookups() {
                         init_index(dice_freq, lookup);
                         Dice dice = Dice(dice_freq);
                         all_dice[lookup.index] = dice;
+                        std::cout << "i: " << lookup.index << " dice: " << dice.to_string() << std::endl;
                     }
                 }
             }
@@ -484,12 +485,11 @@ void init_mask_lookups() {
     }
 
     std::cout << "Computing mask lookups..." << std::endl;
-    for (int i = 1; i < mask_lookups.size(); i++) {
-        MaskLookup mask_lookup;
-        for (int j = 0; j < all_dice.size(); j++) {
-            Dice dice = all_dice[j];
-            DiceLookup dice_lookup = get_dice_lookup(dice);
-            mask_lookup.best_rerolls[j] = compute_best_reroll(dice, i);
+    for (int i = 0; i < all_dice.size(); i++) {
+        Dice dice = all_dice[i];
+        std::cout << dice.to_string() << std::endl;
+        for (int j = 1; j < mask_lookups.size(); j++) {
+            mask_lookups[j].best_rerolls[i] = compute_best_reroll(dice, j);
         }
     }
     save_binary(MASK_CACHE_FILENAME, true);

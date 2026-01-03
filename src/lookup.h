@@ -12,6 +12,7 @@ extern std::array<double, (int)Category::Count> expected_values;
 struct DiceLookup {
     std::vector<CategoryEntry> categories;
     std::array<Reroll, 63> rerolls;
+    std::array<Reroll, 63> sorted_rerolls;
     std::array<std::array<float, (int)Category::Count>, 63> reroll_category_evs;
     uint32_t category_mask = 0;
     // Unique index for each dice combination from 0 to 461

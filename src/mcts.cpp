@@ -82,7 +82,7 @@ bool MCTSNode::is_leaf_node() {
 }
 
 bool MCTSNode::rerolls_left() {
-    const int REROLLS = 4;
+    const int REROLLS = 1;
     return reroll_i < REROLLS && game.player().rerolls > 0;
 }
 
@@ -194,7 +194,8 @@ Move MCTSNode::next_move() {
         category_i = next_valid_category(*lookup, score_mask, category_i.value());
     } else if (rerolls_left()) {
         move.type = Move::Type::Reroll;
-        move.reroll = lookup->rerolls[reroll_i];
+        //move.reroll = lookup->rerolls[reroll_i];
+        move.reroll = get_best_reroll(game.dice, game.player().scored_mask);
         reroll_i++;
     } else if (crosses_left()) {
         const uint32_t never_cross = ~0b10000000000000111100;
