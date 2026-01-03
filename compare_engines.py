@@ -16,9 +16,15 @@ def start_engine(path):
         bufsize=1,
     )
 
-def run_games(proc, n, engine_args, label="Engine", verbose=False):
-    arg_str = " ".join(str(x) for x in engine_args)
-    proc.stdin.write(f"{n} {arg_str}\n")
+def run_games(proc, n, ms_per_move, threads, label="Engine", verbose=False):
+    # Construct the flag-based command string for the C++ engine
+    # Based on your C++: -g (games), -t (ms_per_move), -m (threads)
+    arg_str = f"-g {n} -t {ms_per_move} -m {threads}"
+    
+    if verbose:
+        print(f"[{label} in]: {arg_str}")
+        
+    proc.stdin.write(f"{arg_str}\n")
     proc.stdin.flush()
 
     scores = []
@@ -27,13 +33,10 @@ def run_games(proc, n, engine_args, label="Engine", verbose=False):
     for i in range(n):
         line = proc.stdout.readline()
         if not line:
-            print(f"[{label}] Unexpected EOF")
             break
         
         line = line.strip()
-        if verbose:
-            print(f"[{label} out]: {line}")
-
+        # We look for the line containing two numbers (score and vps)
         parts = line.split()
         if len(parts) != 2:
             continue
@@ -53,9 +56,9 @@ def print_final(mean_old, mean_new, delta, lo, hi, n, vps_old, vps_new, confiden
     print(f"{int(confidence*100)}% CI: [{lo:.2f}, {hi:.2f}]")
     print(f"Games: {n}")
     print(f"Vps: {vps_old:.0f} -> {vps_new:.0f}")
-    print()
+    print() 
 
-def sequential_test(engine_old, engine_new, batch_size, engine_args, confidence, verbose):
+def sequential_test(engine_old, engine_new, batch_size, ms_per_move, threads, confidence, verbose):
     proc_a = start_engine(engine_old)
     proc_b = start_engine(engine_new)
 
@@ -64,17 +67,16 @@ def sequential_test(engine_old, engine_new, batch_size, engine_args, confidence,
     
     n, mean_old, mean_new, delta, lo, hi = 0, 0, 0, 0, 0, 0
     mvps_old, mvps_new = 0, 0
-    
-    # Track significance to print special alerts
     already_significant = False 
 
     try:
         while True:
-            sa, va = run_games(proc_a, batch_size, engine_args, "Old (A)", verbose)
-            sb, vb = run_games(proc_b, batch_size, engine_args, "New (B)", verbose)
+            # Pass individual parameters to the updated run_games
+            sa, va = run_games(proc_a, batch_size, ms_per_move, threads, "Old (A)", verbose)
+            sb, vb = run_games(proc_b, batch_size, ms_per_move, threads, "New (B)", verbose)
 
             if len(sa) == 0 or len(sb) == 0:
-                print("Error: One of the engines failed to return data.")
+                print("Error: One of the engines failed to return data. Check if paths are correct.")
                 break
 
             all_scores_old.extend(sa)
@@ -92,7 +94,6 @@ def sequential_test(engine_old, engine_new, batch_size, engine_args, confidence,
             delta = mean_new - mean_old
             se = np.sqrt(var_old/n + var_new/n)
             
-            # Welch-Satterthwaite df
             num = (var_old/n + var_new/n)**2
             den = (var_old**2 / (n**2 * (n-1))) + (var_new**2 / (n**2 * (n-1)))
             df = num / den
@@ -100,7 +101,6 @@ def sequential_test(engine_old, engine_new, batch_size, engine_args, confidence,
             tcrit = stats.t.ppf((1 + confidence) / 2, df)
             lo, hi = delta - tcrit * se, delta + tcrit * se
 
-            # Determine significance
             is_significant = (lo > 0 or hi < 0)
             sig_char = "*" if is_significant else " "
 
@@ -111,7 +111,6 @@ def sequential_test(engine_old, engine_new, batch_size, engine_args, confidence,
                 f"VPS Old={int(mvps_old):,} New={int(mvps_new):,}"
             )
 
-            # Print an alert only when significance is first reached
             if is_significant and not already_significant:
                 print(f"\n>>> STATISTICALLY SIGNIFICANT RESULT REACHED AT N={n} <<<")
                 already_significant = True
@@ -123,26 +122,24 @@ def sequential_test(engine_old, engine_new, batch_size, engine_args, confidence,
     finally:
         if n >= 2:
             print_final(mean_old, mean_new, delta, lo, hi, n, mvps_old, mvps_new, confidence)
-        
         proc_a.terminate()
         proc_b.terminate()
 
 def main():
     parser = argparse.ArgumentParser()
-    # Updated Argument Order
     parser.add_argument("old_engine", help="Path to the baseline engine")
     parser.add_argument("new_engine", help="Path to the engine being tested")
     parser.add_argument("--batch-size", type=int, default=50)
     parser.add_argument("--confidence", type=float, default=0.95)
     parser.add_argument("--ms-per-move", type=int, default=10)
     parser.add_argument("--threads", type=int, default=4)
-    parser.add_argument("-v", "--verbose", action="store_true", help="Show raw engine output")
+    parser.add_argument("-v", "--verbose", action="store_true")
 
     args = parser.parse_args()
 
     sequential_test(
         args.old_engine, args.new_engine, 
-        args.batch_size, [args.ms_per_move, args.threads], 
+        args.batch_size, args.ms_per_move, args.threads, 
         args.confidence, args.verbose
     )
 

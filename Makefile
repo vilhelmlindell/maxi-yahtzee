@@ -1,17 +1,17 @@
 CXX      := g++
-TARGET   := build/maxi-yahtzee
+TARGET   := $(or $(EXE),build/maxi-yahtzee)  # Use EXE if defined, else default
 SOURCES  := $(wildcard src/*.cpp)
 OBJECTS  := $(patsubst src/%.cpp,build/%.o,$(SOURCES))
 BUILD_DIR := build
 
 # Default flags
-CXXFLAGS := -Wall -Wextra -std=c++20 -O3 -Isrc
+CXXFLAGS := -Wall -Wextra -std=c++20 -O3 -Isrc -g
 LDFLAGS  :=
 
 # Toggle debug/sanitizer flags
 DEBUG ?= 0
 ifeq ($(DEBUG),1)
-    CXXFLAGS += -g -O0 -fsanitize=address -fno-omit-frame-pointer
+    CXXFLAGS += -g -O1 -fsanitize=address -fno-omit-frame-pointer
     LDFLAGS  += -fsanitize=address
 endif
 

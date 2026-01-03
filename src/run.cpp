@@ -79,7 +79,7 @@ void run_args(int argc, char* argv[]) {
         return;
     }
 
-    std::cout << "Running " << config.games << " games on " << config.threads << " threads...\n";
+    std::cout << "Running " << config.games << " games on " << config.threads << " threads with " << config.ms_per_move << "ms per move..." << std::endl;
     run_games(config);
 }
 
