@@ -5,7 +5,7 @@ OBJECTS  := $(patsubst src/%.cpp,build/%.o,$(SOURCES))
 BUILD_DIR := build
 
 # Default flags
-CXXFLAGS := -Wall -Wextra -std=c++17 -O3 -Isrc
+CXXFLAGS := -Wall -Wextra -std=c++20 -O3 -Isrc
 LDFLAGS  :=
 
 # Toggle debug/sanitizer flags

@@ -6,18 +6,14 @@
 #include <iostream>
 #include <mutex>
 #include <queue>
-#include <random>
 #include <thread>
 
 extern thread_local uint32_t rng_state;
-
-//#define PRINT_INFO
 
 int64_t visits = 0;
 int64_t milliseconds = 0;
 float average_score = 0;
 
-// Thread Pool State
 static std::vector<std::thread> pool;
 static std::queue<std::function<void()>> tasks;
 static std::mutex pool_mutex;
@@ -47,43 +43,51 @@ static void ensure_pool_exists(int num_threads) {
     }
 }
 
-void run_interface() {
-    int games;
-    int ms_per_move;
-    int num_threads;
-
-    while (true) {
-        std::cout << "Enter: <games> <ms_per_move> <threads> (Ctrl+D to quit): ";
-
-        if (!(std::cin >> games >> ms_per_move >> num_threads)) {
-            std::cout << "\nInput closed, exiting." << std::endl;
-            break; // EOF or invalid input
-        }
-
-        if (games <= 0) {
-            std::cerr << "Number of games must be positive." << std::endl;
-            continue;
-        }
-
-        if (ms_per_move <= 0) {
-            std::cerr << "Milliseconds per move must be positive." << std::endl;
-            continue;
-        }
-
-        if (num_threads <= 0) {
-            std::cerr << "Thread count must be positive." << std::endl;
-            continue;
-        }
-
-        run_games(games, ms_per_move, num_threads);
-    }
+void print_usage(char* prog_name) {
+    std::cout << "Usage: " << prog_name << " [options]\n"
+              << "Options:\n"
+              << "  -g <int>    Number of games (required)\n"
+              << "  -m <int>    Milliseconds per move (required)\n"
+              << "  -t <int>    Number of threads (default: 1)\n"
+              << "  -d          Enable debug mode\n";
 }
 
-void run_games(int game_count, int ms_per_move, int num_threads) {
-    for (int i = 0; i < game_count; i++) {
+void run_args(int argc, char* argv[]) {
+    Config config;
+
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+
+        if (arg == "-g" && i + 1 < argc) {
+            config.games = std::stoi(argv[++i]);
+        } else if (arg == "-t" && i + 1 < argc) {
+            config.ms_per_move = std::stoi(argv[++i]);
+        } else if (arg == "-m" && i + 1 < argc) {
+            config.threads = std::stoi(argv[++i]);
+        } else if (arg == "-d") {
+            config.debug = true;
+        } else {
+            std::cerr << "Unknown or incomplete argument: " << arg << std::endl;
+            print_usage(argv[0]);
+            return;
+        }
+    }
+
+    if (config.games <= 0 || config.ms_per_move <= 0) {
+        std::cerr << "Error: Games and ms_per_move are required and must be positive.\n";
+        print_usage(argv[0]);
+        return;
+    }
+
+    std::cout << "Running " << config.games << " games on " << config.threads << " threads...\n";
+    run_games(config);
+}
+
+void run_games(Config config) {
+    for (int i = 0; i < config.games; i++) {
         Game game = Game(1);
         game.dice = Dice({1, 1, 4, 0, 0, 0});
-        run_game(game, ms_per_move, num_threads);
+        run_game(game, config);
         int score = game.players[0].total_score();
         average_score = average_score + ((float)score - average_score) / (i + 1);
 
@@ -92,9 +96,9 @@ void run_games(int game_count, int ms_per_move, int num_threads) {
     }
 }
 
-void run_game(Game& game, int ms_per_move, int num_threads) {
+void run_game(Game& game, Config config) {
     while (!game.is_terminal()) {
-        Move move = run_mcts(game, ms_per_move, num_threads);
+        Move move = run_mcts(game, config);
         game.play_move(move);
     }
     int score = game.players[0].total_score();
@@ -104,25 +108,20 @@ void run_game(Game& game, int ms_per_move, int num_threads) {
     std::cout << visits << " visits / " << milliseconds << " ms = " << vps << " vps" << std::endl;
 }
 
-Move run_mcts(Game& game, int ms_per_move, int num_threads) {
-    ensure_pool_exists(num_threads);
+Move run_mcts(Game& game, Config config) {
+    ensure_pool_exists(config.threads);
 
     std::vector<std::unique_ptr<MCTSNode>> thread_roots;
     std::atomic<int> completed_tasks{0};
-    auto duration = std::chrono::milliseconds(ms_per_move);
+    auto duration = std::chrono::milliseconds(config.ms_per_move);
 
-    // 1. Dispatch tasks
-    for (int i = 0; i < num_threads; i++) {
-        // 1. Create the node
+    for (int i = 0; i < config.threads; i++) {
         auto node_ptr = std::make_unique<MCTSNode>(game);
-        // 2. Get the raw pointer to pass to the thread
         MCTSNode* raw_node_ptr = node_ptr.get();
-        // 3. Move ownership into the vector
         thread_roots.push_back(std::move(node_ptr));
 
         {
             std::lock_guard<std::mutex> lock(pool_mutex);
-            // Capture raw_node_ptr by VALUE, not thread_roots by reference
             tasks.push([raw_node_ptr, duration, &completed_tasks]() {
                 rng_state = std::hash<std::thread::id>{}(std::this_thread::get_id());
 
@@ -136,14 +135,12 @@ Move run_mcts(Game& game, int ms_per_move, int num_threads) {
         pool_cv.notify_one();
     }
 
-    // 2. Wait for this move's batch to finish
-    while (completed_tasks < num_threads) {
+    while (completed_tasks < config.threads) {
         std::this_thread::yield();
     }
 
-    // 3. Merge results (Reduction)
     MCTSNode* total = thread_roots.back().get();
-    for (int i = 0; i < num_threads - 1; i++) {
+    for (int i = 0; i < config.threads - 1; i++) {
         MCTSNode* root = thread_roots[i].get();
         total->visits += root->visits;
         total->total_score += root->total_score;
@@ -160,10 +157,10 @@ Move run_mcts(Game& game, int ms_per_move, int num_threads) {
 
     visits += total->visits;
     milliseconds += duration.count();
-#ifdef PRINT_INFO
-    std::cout << game.dice.to_string() << std::endl;
-    std::cout << total->children_string() << std::endl;
-    std::cout << total->children[0]->move.value().to_string() << std::endl;
-#endif
+    if (config.debug) {
+        std::cout << game.dice.to_string() << std::endl;
+        std::cout << total->children_string() << std::endl;
+        std::cout << total->children[0]->move.value().to_string() << std::endl;
+    }
     return total->children[0]->move.value();
 }
