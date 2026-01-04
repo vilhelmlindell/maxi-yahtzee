@@ -32,24 +32,33 @@ static void save_binary(const std::string& filename, bool is_mask_table = false)
     }
 
     if (is_mask_table) {
-        // --- Saving MaskLookup Table ---
         size_t total_entries = mask_lookups.size();
         ofs.write(reinterpret_cast<const char*>(&total_entries), sizeof(total_entries));
-        // MaskLookup contains a fixed-size std::array of Reroll, so we can write the whole vector block
+        // MaskLookup is POD-stable (contains fixed array of Reroll and a uint8_t)
         ofs.write(reinterpret_cast<const char*>(mask_lookups.data()), total_entries * sizeof(MaskLookup));
     } else {
-        // --- Saving DiceLookup Table (Existing Logic) ---
         size_t total_entries = dice_lookups.size();
         ofs.write(reinterpret_cast<const char*>(&total_entries), sizeof(total_entries));
 
         for (const auto& entry : dice_lookups) {
+            // 1. Save Category Vector
             size_t vec_size = entry.categories.size();
             ofs.write(reinterpret_cast<const char*>(&vec_size), sizeof(vec_size));
             if (vec_size > 0) {
                 ofs.write(reinterpret_cast<const char*>(entry.categories.data()), vec_size * sizeof(CategoryEntry));
             }
+
+            // 2. Save Fixed Arrays (64 entries each)
+            ofs.write(reinterpret_cast<const char*>(entry.rerolls.data()), entry.rerolls.size() * sizeof(Reroll));
             ofs.write(reinterpret_cast<const char*>(entry.sorted_rerolls.data()), entry.sorted_rerolls.size() * sizeof(Reroll));
+            
+            // 3. Save EV Table (2D Array)
+            ofs.write(reinterpret_cast<const char*>(entry.reroll_category_evs.data()), 
+                      entry.reroll_category_evs.size() * sizeof(std::array<float, (int)Category::Count>));
+
+            // 4. Save Primitives
             ofs.write(reinterpret_cast<const char*>(&entry.category_mask), sizeof(entry.category_mask));
+            ofs.write(reinterpret_cast<const char*>(&entry.index), sizeof(entry.index));
         }
     }
     std::cout << "Table saved to " << filename << std::endl;
@@ -57,28 +66,36 @@ static void save_binary(const std::string& filename, bool is_mask_table = false)
 
 static bool load_binary(const std::string& filename, bool is_mask_table = false) {
     std::ifstream ifs(filename, std::ios::binary);
-    if (!ifs)
-        return false;
+    if (!ifs) return false;
 
     size_t total_entries;
     ifs.read(reinterpret_cast<char*>(&total_entries), sizeof(total_entries));
 
     if (is_mask_table) {
-        if (total_entries != mask_lookups.size())
-            return false;
+        if (total_entries != mask_lookups.size()) return false;
         ifs.read(reinterpret_cast<char*>(mask_lookups.data()), total_entries * sizeof(MaskLookup));
     } else {
-        if (total_entries != dice_lookups.size())
-            return false;
+        if (total_entries != dice_lookups.size()) return false;
         for (auto& entry : dice_lookups) {
+            // 1. Load Category Vector
             size_t vec_size;
             ifs.read(reinterpret_cast<char*>(&vec_size), sizeof(vec_size));
             entry.categories.resize(vec_size);
             if (vec_size > 0) {
                 ifs.read(reinterpret_cast<char*>(entry.categories.data()), vec_size * sizeof(CategoryEntry));
             }
+
+            // 2. Load Fixed Arrays
+            ifs.read(reinterpret_cast<char*>(entry.rerolls.data()), entry.rerolls.size() * sizeof(Reroll));
             ifs.read(reinterpret_cast<char*>(entry.sorted_rerolls.data()), entry.sorted_rerolls.size() * sizeof(Reroll));
+
+            // 3. Load EV Table
+            ifs.read(reinterpret_cast<char*>(entry.reroll_category_evs.data()), 
+                     entry.reroll_category_evs.size() * sizeof(std::array<float, (int)Category::Count>));
+
+            // 4. Load Primitives
             ifs.read(reinterpret_cast<char*>(&entry.category_mask), sizeof(entry.category_mask));
+            ifs.read(reinterpret_cast<char*>(&entry.index), sizeof(entry.index));
         }
     }
     return true;
@@ -136,22 +153,23 @@ static size_t freq_to_index(std::array<uint8_t, 6> const& dice_freq) {
     return dice_freq[0] + dice_freq[1] * 7 + dice_freq[2] * 7 * 7 + dice_freq[3] * 7 * 7 * 7 + dice_freq[4] * 7 * 7 * 7 * 7 + dice_freq[5] * 7 * 7 * 7 * 7 * 7;
 }
 
-DiceLookup& get_dice_lookup(Dice dice) {
-    return dice_lookups[freq_to_index(dice.dice_freq)];
-}
-
-Reroll get_best_reroll(Dice dice, uint32_t mask) {
-    DiceLookup lookup = get_dice_lookup(dice);
-    return mask_lookups[mask].best_rerolls[lookup.index];
-}
 
 static Reroll compute_best_reroll(Dice dice, uint32_t mask) {
     DiceLookup& lookup = get_dice_lookup(dice);
     Reroll best;
     float best_score = 0;
+    int bonus_progress = 0;
+    for (int i = (int)Category::Ones; i <= (int)Category::Sixes; i++) {
+        bonus_progress += avg_scores[i];
+    }
+    int rounds = std::popcount(mask);
     for (int i = 0; i < 63; i++) {
+        //std::cout << lookup.sorted_rerolls[i].to_string() << std::endl;
         float score = 0;
         for (int j = 0; j < 20; j++) {
+            //if (j >= (int)Category::Threes && j <= (int)Category::Fours) {
+            //    (rounds / 20) * (75 / bonus_progress);
+            //}
             if (mask & (1 << j)) {
                 score += lookup.reroll_category_evs[i][j];
             }
@@ -162,6 +180,16 @@ static Reroll compute_best_reroll(Dice dice, uint32_t mask) {
         }
     }
     return best;
+}
+
+DiceLookup& get_dice_lookup(Dice dice) {
+    return dice_lookups[freq_to_index(dice.dice_freq)];
+}
+
+Reroll get_best_reroll(Dice dice, uint32_t mask) {
+    DiceLookup lookup = get_dice_lookup(dice);
+    //return compute_best_reroll(dice, mask);
+    return mask_lookups[mask].best_rerolls[lookup.index];
 }
 
 double get_score_heuristic(CategoryEntry entry) {
@@ -264,10 +292,12 @@ static void init_ev(std::array<uint8_t, 6>& dice_freq, DiceLookup& lookup) {
             }
         }
 
+        lookup.rerolls[i] = reroll;
+
         std::map<std::array<uint8_t, 6>, double> outcomes;
         init_outcomes(reroll.num_rolls, reroll.hold_freq, 1.0, outcomes);
 
-        std::array<float, (int)Category::Count> category_evs;
+        std::array<float, (int)Category::Count> category_evs{};
         double ev_sum = 0;
 
         for (auto const& [result_dice, probability] : outcomes) {
@@ -279,7 +309,7 @@ static void init_ev(std::array<uint8_t, 6>& dice_freq, DiceLookup& lookup) {
                 if ((int)entry.category >= category_evs.size()) {
                     std::cout << "Error: " << (int)entry.category << std::endl;
                 }
-                category_evs[(int)entry.category] = entry.score * probability;
+                category_evs[(int)entry.category] += entry.score * probability;
                 ev_sum += ev;
             }
             // for (auto const& dice : result_dice) {
@@ -485,6 +515,7 @@ void init_mask_lookups() {
     }
 
     std::cout << "Computing mask lookups..." << std::endl;
+#pragma omp parallel for schedule(dynamic)
     for (int i = 0; i < all_dice.size(); i++) {
         Dice dice = all_dice[i];
         std::cout << dice.to_string() << std::endl;

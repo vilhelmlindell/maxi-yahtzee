@@ -86,7 +86,6 @@ void run_args(int argc, char* argv[]) {
 void run_games(Config config) {
     for (int i = 0; i < config.games; i++) {
         Game game = Game(1);
-        game.dice = Dice({1, 1, 4, 0, 0, 0});
         run_game(game, config);
         int score = game.players[0].total_score();
         average_score = average_score + ((float)score - average_score) / (i + 1);

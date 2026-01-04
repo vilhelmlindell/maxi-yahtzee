@@ -359,8 +359,8 @@ std::string Game::scores_string() {
     oss << "================ SCOREBOARD ================\n";
 
     for (size_t p = 0; p < players.size(); ++p) {
-        const Player& player = players[p];
-        int total = 0;
+        Player& player = players[p];
+        int total = player.total_score();
 
         oss << "Player " << p << ":\n";
         for (int c = 0; c < (int)Category::Count; ++c) {
@@ -368,7 +368,6 @@ std::string Game::scores_string() {
 
             if (player.scores[c]) {
                 oss << std::setw(3) << (int)*player.scores[c];
-                total += *player.scores[c];
             } else {
                 oss << "---";
             }

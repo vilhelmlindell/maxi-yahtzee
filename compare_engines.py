@@ -4,11 +4,13 @@ import subprocess
 import numpy as np
 from scipy import stats
 import argparse
-import sys
+import shlex
 
-def start_engine(path):
+def start_engine(cmd_string):
+    # Splits the string into a list, e.g., './engine -d' becomes ['./engine', '-d']
+    args = shlex.split(cmd_string)
     return subprocess.Popen(
-        [path],
+        args,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -16,10 +18,9 @@ def start_engine(path):
         bufsize=1,
     )
 
-def run_games(proc, n, ms_per_move, threads, label="Engine", verbose=False):
-    # Construct the flag-based command string for the C++ engine
-    # Based on your C++: -g (games), -t (ms_per_move), -m (threads)
-    arg_str = f"-g {n} -t {ms_per_move} -m {threads}"
+def run_games(proc, n, label="Engine", verbose=False):
+    # The engine now only receives the game count per batch via stdin
+    arg_str = f"-g {n}"
     
     if verbose:
         print(f"[{label} in]: {arg_str}")
@@ -36,7 +37,6 @@ def run_games(proc, n, ms_per_move, threads, label="Engine", verbose=False):
             break
         
         line = line.strip()
-        # We look for the line containing two numbers (score and vps)
         parts = line.split()
         if len(parts) != 2:
             continue
@@ -50,17 +50,15 @@ def run_games(proc, n, ms_per_move, threads, label="Engine", verbose=False):
     return scores, vps
 
 def print_final(mean_old, mean_new, delta, lo, hi, n, vps_old, vps_new, confidence):
-    print()
-    print("Score comparison (Old -> New):")
+    print("\nScore comparison (Old -> New):")
     print(f"Score: {mean_old:.2f} -> {mean_new:.2f} (Δ = {delta:+.2f})")
     print(f"{int(confidence*100)}% CI: [{lo:.2f}, {hi:.2f}]")
     print(f"Games: {n}")
-    print(f"Vps: {vps_old:.0f} -> {vps_new:.0f}")
-    print() 
+    print(f"Vps: {vps_old:.0f} -> {vps_new:.0f}\n")
 
-def sequential_test(engine_old, engine_new, batch_size, ms_per_move, threads, confidence, verbose):
-    proc_a = start_engine(engine_old)
-    proc_b = start_engine(engine_new)
+def sequential_test(engine_old_cmd, engine_new_cmd, batch_size, confidence, verbose):
+    proc_a = start_engine(engine_old_cmd)
+    proc_b = start_engine(engine_new_cmd)
 
     all_scores_old, all_scores_new = [], []
     all_vps_old, all_vps_new = [], []
@@ -71,12 +69,11 @@ def sequential_test(engine_old, engine_new, batch_size, ms_per_move, threads, co
 
     try:
         while True:
-            # Pass individual parameters to the updated run_games
-            sa, va = run_games(proc_a, batch_size, ms_per_move, threads, "Old (A)", verbose)
-            sb, vb = run_games(proc_b, batch_size, ms_per_move, threads, "New (B)", verbose)
+            sa, va = run_games(proc_a, batch_size, "Old (A)", verbose)
+            sb, vb = run_games(proc_b, batch_size, "New (B)", verbose)
 
             if len(sa) == 0 or len(sb) == 0:
-                print("Error: One of the engines failed to return data. Check if paths are correct.")
+                print("Error: One of the engines failed to return data. Check commands.")
                 break
 
             all_scores_old.extend(sa)
@@ -127,20 +124,17 @@ def sequential_test(engine_old, engine_new, batch_size, ms_per_move, threads, co
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("old_engine", help="Path to the baseline engine")
-    parser.add_argument("new_engine", help="Path to the engine being tested")
+    parser.add_argument("old_engine", help="Command to run old engine (e.g. './engine -t 10')")
+    parser.add_argument("new_engine", help="Command to run new engine (e.g. './engine -t 10 -d')")
     parser.add_argument("--batch-size", type=int, default=50)
     parser.add_argument("--confidence", type=float, default=0.95)
-    parser.add_argument("--ms-per-move", type=int, default=10)
-    parser.add_argument("--threads", type=int, default=4)
     parser.add_argument("-v", "--verbose", action="store_true")
 
     args = parser.parse_args()
 
     sequential_test(
         args.old_engine, args.new_engine, 
-        args.batch_size, args.ms_per_move, args.threads, 
-        args.confidence, args.verbose
+        args.batch_size, args.confidence, args.verbose
     )
 
 if __name__ == "__main__":
