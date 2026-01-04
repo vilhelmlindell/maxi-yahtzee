@@ -175,9 +175,9 @@ void MCTSNode::run_iteration() {
     Game sim_game = node->game;
     sim_game.playout();
     int win_score = sim_game.players[0].total_score();
-    if (sim_game.players[0].bonus_progress < 75) {
-        win_score = 0;
-    }
+    //if (sim_game.players[0].bonus_progress < 75) {
+    //    win_score = 0;
+    //}
     lowest_score = std::min(lowest_score, win_score);
     highest_score = std::max(highest_score, win_score);
     // std::cout << sim_game.scores_string() << std::endl;
