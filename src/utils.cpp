@@ -6,9 +6,6 @@
 
 thread_local uint32_t rng_state = 167;
 
-//static uint8_t rng(void) {
-//    return rng_state++ * 29;
-//}
 static uint8_t rng(void) {
     rng_state ^= rng_state << 13;
     rng_state ^= rng_state >> 17;
@@ -17,7 +14,6 @@ static uint8_t rng(void) {
 }
 
 uint8_t fast_rand(uint8_t max) {
-    //return rand() % max;
     return ((uint16_t)rng() * max) >> 8;
 }
 

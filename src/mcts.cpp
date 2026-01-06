@@ -26,6 +26,7 @@ MCTSNode::MCTSNode(Game game)
     cross_mask = game.player().scored_mask;
 
     category_i = next_valid_category(*lookup, score_mask, category_i.value());
+    rerolls = get_best_rerolls(game.dice, game.player().scored_mask);
 
     //for (size_t i = 0; i < lookup->categories.size(); i++) {
     //    CategoryEntry entry = lookup->categories.at(i);
@@ -82,7 +83,6 @@ bool MCTSNode::is_leaf_node() {
 }
 
 bool MCTSNode::rerolls_left() {
-    const int REROLLS = 1;
     return reroll_i < REROLLS && game.player().rerolls > 0;
 }
 
@@ -191,7 +191,7 @@ Move MCTSNode::next_move() {
     } else if (rerolls_left()) {
         move.type = Move::Type::Reroll;
         //move.reroll = lookup->rerolls[reroll_i];
-        move.reroll = get_best_reroll(game.dice, game.player().scored_mask);
+        move.reroll = lookup->sorted_rerolls[rerolls[reroll_i]];
         reroll_i++;
     } else if (crosses_left()) {
         const uint32_t never_cross = ~0b10000000000000111100;

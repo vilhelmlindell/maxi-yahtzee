@@ -5,8 +5,8 @@ OBJECTS  := $(patsubst src/%.cpp,build/%.o,$(SOURCES))
 BUILD_DIR := build
 
 # Default flags
-CXXFLAGS := -Wall -Wextra -std=c++20 -O3 -Isrc -g
-LDFLAGS  :=
+CXXFLAGS := -Wall -Wextra -Wpedantic -Wshadow -Wconversion -std=c++20 -O3 -Isrc -g -fopenmp
+LDFLAGS  := -fopenmp
 
 # Toggle debug/sanitizer flags
 DEBUG ?= 0

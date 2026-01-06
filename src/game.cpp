@@ -149,7 +149,7 @@ Dice::Dice() {
 void Dice::reroll_all() {
     dice_freq.fill(0);
     for (int i = 0; i < 6; i++) {
-        dice_freq[rand() % 6]++;
+        dice_freq[fast_rand(6)]++;
     }
 }
 
@@ -157,7 +157,7 @@ void Dice::reroll(Reroll const& reroll) {
     dice_freq = reroll.hold_freq;
     int num_rolls = reroll.num_rolls;
     while (num_rolls > 0) {
-        dice_freq[rand() % 6]++;
+        dice_freq[fast_rand(6)]++;
         num_rolls--;
     }
 }
@@ -308,7 +308,7 @@ void Game::playout() {
 
         if (lookup.categories.size() >= 1 && fast_rand(2)) {
             int start = fast_rand(1 + lookup.categories.size() / 3);
-            //int start = 0;
+            // int start = 0;
 
             std::optional<uint8_t> i = next_valid_category(lookup, combined, start);
             if (!i.has_value()) {
@@ -327,8 +327,17 @@ void Game::playout() {
         }
 
         if (player().rerolls > 0) {
-            //Reroll reroll = get_best_reroll(dice, player().scored_mask);
-            Reroll reroll = lookup.rerolls[0];
+            std::array<uint8_t, REROLLS> rerolls = get_best_rerolls(dice, player().scored_mask);
+            uint8_t i = rerolls[fast_rand(REROLLS)];
+            if (i >= lookup.sorted_rerolls.size()) {
+                std::cerr << "Error: Index out of bounds!" << std::endl;
+                std::cerr << "Index (i): " << (int)i << std::endl;
+                std::cerr << "Size (lookup.sorted_rerolls.size()): " << lookup.sorted_rerolls.size() << std::endl;
+
+                // Terminate the program
+                std::exit(EXIT_FAILURE);
+            }
+            Reroll reroll = lookup.sorted_rerolls[i];
             dice.reroll(reroll);
             player().rerolls--;
         } else {

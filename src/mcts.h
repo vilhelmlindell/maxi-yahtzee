@@ -38,6 +38,7 @@ struct MCTSNode {
     uint32_t score_mask = 0;
     uint32_t cross_mask = 0;
     uint8_t reroll_i = 0;
+    std::array<uint8_t, REROLLS> rerolls;
 
     MCTSNode(Game game);
 
