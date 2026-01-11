@@ -24,7 +24,6 @@ struct MCTSNode {
 
     //double cached_ucb1 = 0;
     double cached_log_visits = 0;
-    uint64_t cached_visits = 0;
 
 
 #ifdef MAXIMIZE_AVERAGE_SCORE
@@ -52,7 +51,7 @@ struct MCTSNode {
     MCTSNode* select_child();
     MCTSNode* expand();
     uint8_t simulate();
-    void backpropagate(Game& sim_game, uint8_t total_score);
+    void backpropagate(Game& sim_game, int total_score);
     void run_iteration();
     Move next_move();
     MCTSNode* best_child() const;

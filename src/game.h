@@ -36,6 +36,13 @@ const char* category_to_string(Category c);
 Category category_from_string(std::string_view s);
 bool is_bonus_category(Category c);
 
+struct CategoryEntry {
+    Category category = Category::Ones;
+    uint8_t score = 0;
+
+    bool operator==(const CategoryEntry&) const = default;
+};
+
 struct Player {
     std::array<std::optional<uint8_t>, (int)(Category::Count)> scores{};
     uint8_t bonus_progress = 0;
@@ -43,13 +50,7 @@ struct Player {
     uint8_t rerolls = 2;
 
     int total_score();
-};
-
-struct CategoryEntry {
-    Category category = Category::Ones;
-    uint8_t score = 0;
-
-    bool operator==(const CategoryEntry&) const = default;
+    void score(CategoryEntry entry);
 };
 
 struct Reroll {
@@ -71,10 +72,9 @@ struct Dice {
 };
 
 struct Move {
-    enum class Type { Reroll, Cross, Score } type;
+    enum class Type { Reroll, Score } type;
     Reroll reroll;
     CategoryEntry score_entry;
-    Category crossed_category;
 
     Move();
     std::string to_string();
@@ -95,6 +95,7 @@ struct Game {
     Player& player();
     void next_player();
     void play_move(Move move);
+    Move random_move();
     void playout();
     std::string scores_string();
 };

@@ -10,7 +10,7 @@
 #include <sstream>
 #include <vector>
 
-thread_local int lowest_score = 0;
+thread_local int lowest_score = 1000;
 thread_local int highest_score = 0;
 
 MCTSNode::MCTSNode(Game game)
@@ -19,39 +19,11 @@ MCTSNode::MCTSNode(Game game)
 
     lookup = &get_dice_lookup(game.dice);
 
-    if (lookup == nullptr) {
-        std::cout << "Oh no" << game.dice.to_string() << std::endl;
-    }
     score_mask = lookup->category_mask & game.player().scored_mask;
     cross_mask = game.player().scored_mask;
 
     category_i = next_valid_category(*lookup, score_mask, category_i.value());
     rerolls = get_best_rerolls(game.dice, game.player().scored_mask);
-
-    //for (size_t i = 0; i < lookup->categories.size(); i++) {
-    //    CategoryEntry entry = lookup->categories.at(i);
-    //    if (score_mask & 1 << (int)entry.category) {
-
-    //        //bool is_upper = (int)entry.category >= (int)Category::Threes && (int)entry.category <= (int)Category::Sixes;
-    //        //if (is_upper) {
-    //        //    if ()
-    //        //}
-    //        float heuristic = get_score_heuristic(entry);
-    //        if (heuristic == 0.0) {
-    //            continue;
-    //        }
-    //        std::pair<uint8_t, float> new_pair = {i, heuristic};
-
-    //        // Find the insertion point (sorting by heuristic descending)
-    //        auto it = categories.begin();
-    //        while (it != categories.end() && it->second > heuristic) {
-    //            ++it;
-    //        }
-
-    //        // insert() handles the shifting of elements for you
-    //        categories.insert(it, new_pair);
-    //    }
-    //}
 }
 
 double MCTSNode::compute_ucb1_reward() {
@@ -59,8 +31,11 @@ double MCTSNode::compute_ucb1_reward() {
     // return (double)wins / (double)visits;
     // If we are trying to maximize average score
     double average_score = (double)total_score / (double)visits;
-    double normalized_reward = (average_score / 300);
-    // double normalized_reward = (average_score - lowest_score) / (highest_score - lowest_score);
+    //double normalized_reward = average_score / 500;
+    if (highest_score < lowest_score) {
+        return 0.5;
+    }
+    double normalized_reward = (average_score - lowest_score) / (highest_score - lowest_score);
     return normalized_reward;
 }
 
@@ -94,41 +69,10 @@ bool MCTSNode::crosses_left() {
     return cross_mask;
 }
 
-// MCTSNode* MCTSNode::select_child() {
-//     MCTSNode* current = this;
-//
-//     // A node is only a "leaf" for selection purposes if it hasn't
-//     // exhausted its moves OR if it's terminal.
-//     // If it's FULLY expanded, we MUST descend.
-//     while (!current->is_terminal()) {
-//         if (current->is_leaf_node()) {
-//             // This node still has moves to expand, so stop here and expand one.
-//             return current;
-//         }
-//
-//         // If we get here, the node is fully expanded.
-//         // Use UCB1 to pick which child to descend into.
-//         auto selected = std::max_element(current->children.begin(), current->children.end(),
-//             [](const std::unique_ptr<MCTSNode>& a, const std::unique_ptr<MCTSNode>& b) {
-//                 return a->ucb1() < b->ucb1();
-//             });
-//         current = selected->get();
-//     }
-//     return current;
-// }
 MCTSNode* MCTSNode::select_child() {
     MCTSNode* current = this;
 
-    if (current == nullptr) {
-        std::cerr << "1 Error current nullptr" << std::endl;
-        std::terminate();
-    }
-
     while (!current->is_leaf_node() && !current->is_terminal()) {
-        if (visits != cached_visits) {
-            cached_log_visits = log((double)visits);
-            cached_visits = visits;
-        }
         auto selected = std::max_element(current->children.begin(), current->children.end(), [](const std::unique_ptr<MCTSNode>& a, const std::unique_ptr<MCTSNode>& b) {
             return a->ucb1() < b->ucb1();
         });
@@ -157,12 +101,16 @@ MCTSNode* MCTSNode::expand() {
     return children.back().get();
 }
 
-void MCTSNode::backpropagate(Game& sim_game, uint8_t win_score) {
+void MCTSNode::backpropagate(Game& sim_game, int win_score) {
     visits++;
     total_score += win_score;
     // if (player_i == winner) {
     //     wins++;
     // }
+
+    if (visits != 0) {
+        cached_log_visits = std::log(visits);
+    }
 
     if (parent != nullptr) {
         parent->backpropagate(sim_game, win_score);
@@ -186,7 +134,9 @@ Move MCTSNode::next_move() {
     if (categories_left()) {
         move.type = Move::Type::Score;
         move.score_entry = lookup->categories.at(category_i.value());
-        score_mask ^= 1 << (int)move.score_entry.category;
+        uint32_t cat_mask = 1 << (int)move.score_entry.category;
+        score_mask ^= cat_mask;
+        cross_mask ^= cat_mask;
         category_i = next_valid_category(*lookup, score_mask, category_i.value());
     } else if (rerolls_left()) {
         move.type = Move::Type::Reroll;
@@ -201,8 +151,9 @@ Move MCTSNode::next_move() {
         } else {
             i = random_set_bit_u32(cross_mask);
         }
-        move.type = Move::Type::Cross;
-        move.crossed_category = (Category)i;
+        move.type = Move::Type::Score;
+        move.score_entry.category = (Category)i;
+        move.score_entry.score = 0;
         cross_mask ^= 1 << i;
     } else {
         std::cerr << "panic: next_move found no move\n";
@@ -241,12 +192,23 @@ std::string MCTSNode::node_string() {
 std::string MCTSNode::children_string() {
     std::ostringstream oss;
 
-    std::sort(children.begin(), children.end(), [](const std::unique_ptr<MCTSNode>& a, const std::unique_ptr<MCTSNode>& b) {
-        return a->visits > b->visits;
-    });
+    // non-owning view
+    std::vector<MCTSNode*> view;
+    view.reserve(children.size());
 
-    for (auto& node : children) {
-        oss << node->node_string() << std::endl;
+    for (auto& child : children) {
+        view.push_back(child.get());
     }
+
+    // sort the view, not the owners
+    std::sort(view.begin(), view.end(),
+        [](const MCTSNode* a, const MCTSNode* b) {
+            return a->visits > b->visits;
+        });
+
+    for (MCTSNode* node : view) {
+        oss << node->node_string() << '\n';
+    }
+
     return oss.str();
 }

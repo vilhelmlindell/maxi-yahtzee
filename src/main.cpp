@@ -47,6 +47,11 @@ int main(int argc, char* argv[]) {
     //}
     //uint32_t mask = 0b1111111111;
 
+    //Config config;
+    //config.threads = 1;
+    //config.debug = true;
+    //Game game = Game(1);
+    //run_mcts(game, config);
     run_args(argc, argv);
 
     //Dice dice = Dice({1, 1, 0, 4, 0, 0});

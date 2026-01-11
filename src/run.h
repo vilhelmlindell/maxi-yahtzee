@@ -3,6 +3,7 @@
 struct Config {
     int games = 1000;
     int ms_per_move = 10;
+    //int iterations = 0;
     int threads = 4;
     bool debug = false;
 };

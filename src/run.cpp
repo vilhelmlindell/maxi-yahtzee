@@ -1,5 +1,6 @@
 #include "run.h"
 #include "mcts.h"
+#include <algorithm>
 #include <atomic>
 #include <condition_variable>
 #include <functional>
@@ -99,6 +100,10 @@ void run_game(Game& game, Config config) {
     while (!game.is_terminal()) {
         Move move = run_mcts(game, config);
         game.play_move(move);
+        if (config.debug) {
+            std::cout << "Rerolls left: " << (int)game.player().rerolls << std::endl;
+            std::cout << "Round: " << (int)game.rounds << std::endl;
+        }
     }
     int score = game.players[0].total_score();
     int64_t vps = (float)visits / ((float)milliseconds / 1000);
@@ -156,6 +161,12 @@ Move run_mcts(Game& game, Config config) {
 
     visits += total->visits;
     milliseconds += duration.count();
+    //std::cout << "Before " << total->children[0]->move->to_string() << std::endl;
+
+    std::sort(total->children.begin(), total->children.end(), [](const std::unique_ptr<MCTSNode>& a, const std::unique_ptr<MCTSNode>& b) {
+        return a->visits > b->visits;
+    });
+
     if (config.debug) {
         std::cout << game.dice.to_string() << std::endl;
         std::cout << total->children_string() << std::endl;

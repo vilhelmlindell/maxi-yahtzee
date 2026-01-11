@@ -2,6 +2,7 @@
 #include "lookup.h"
 #include "utils.h"
 #include <algorithm>
+#include <bitset>
 #include <cassert>
 #include <chrono>
 #include <cmath>
@@ -130,6 +131,15 @@ int Player::total_score() {
     return sum;
 }
 
+void Player::score(CategoryEntry entry) {
+    scores[(int)entry.category] = entry.score;
+    scored_mask ^= 1 << (int)entry.category;
+
+    if ((int)entry.category >= (int)Category::Ones && (int)entry.category <= (int)Category::Sixes) {
+        bonus_progress += entry.score;
+    }
+}
+
 std::string Reroll::to_string() {
     std::ostringstream oss;
     for (int i = 0; i < 6; i++) {
@@ -182,13 +192,12 @@ std::string Move::to_string() {
         oss << "reroll " << reroll.to_string();
         break;
     }
-    case Move::Type::Cross: {
-        oss << "cross " << category_to_string(crossed_category);
-        break;
-    }
     case Move::Type::Score: {
-        oss << "score " << category_to_string(score_entry.category) << " " << (int)score_entry.score;
-        // snprintf(buffer, sizeof(buffer), "score %s %d", category_to_string(score_entry.category), score_entry.score);
+        if (score_entry.score == 0) {
+            oss << "cross " << category_to_string(score_entry.category);
+        } else {
+            oss << "score " << category_to_string(score_entry.category) << " " << (int)score_entry.score;
+        }
         break;
     }
     }
@@ -215,12 +224,9 @@ Move Move::from_string(const std::string& input) {
         // TODO: Finish
         // m.reroll_mask = static_cast<uint8_t>(mask);
     } else if (cmd == "cross") {
-        uint32_t index = parse_uint(arg1);
-        if (index > 0xFF)
-            throw std::out_of_range("Cross index must fit in uint8_t");
-
-        m.type = Move::Type::Cross;
-        m.crossed_category = (Category)index;
+        m.type = Move::Type::Score;
+        m.score_entry.category = category_from_string(arg1);
+        m.score_entry.score = 0;
     } else if (cmd == "score") {
         iss >> arg2;
         m.type = Move::Type::Score;
@@ -289,77 +295,48 @@ void Game::play_move(Move move) {
         player().rerolls--;
         break;
     }
-    case Move::Type::Cross: {
-        int i = (int)move.crossed_category;
-        player().scores[i] = 0;
-        player().scored_mask ^= 1 << i;
-        next_player();
-        break;
-    }
     }
 }
 
 void Game::playout() {
     while (!is_terminal()) {
         DiceLookup& lookup = get_dice_lookup(dice);
-        // std::cout << dice.to_string() << std::endl;
-        // Move move;
         uint32_t combined = lookup.category_mask & player().scored_mask;
 
-        if (lookup.categories.size() >= 1 && fast_rand(2)) {
-            int start = fast_rand(1 + lookup.categories.size() / 3);
-            // int start = 0;
+        int start = 0;
+        std::optional<uint8_t> category_i = next_valid_category(lookup, combined, start);
 
-            std::optional<uint8_t> i = next_valid_category(lookup, combined, start);
-            if (!i.has_value()) {
-                break;
-            }
+        if (lookup.categories.size() >= 1 && category_i.has_value() && fast_rand(2)) {
+            CategoryEntry entry = lookup.categories[category_i.value()];
 
-            CategoryEntry category = lookup.categories[i.value()];
-
-            player().scores[(int)category.category] = category.score;
-            player().scored_mask ^= (int)category.category;
-            if ((int)category.category >= (int)Category::Ones && (int)category.category <= (int)Category::Sixes) {
-                player().bonus_progress += category.score;
-            }
+            player().score(entry);
             next_player();
-            continue;
-        }
-
-        if (player().rerolls > 0) {
-            std::array<uint8_t, REROLLS> rerolls = get_best_rerolls(dice, player().scored_mask);
-            uint8_t i = rerolls[fast_rand(REROLLS)];
-            if (i >= lookup.sorted_rerolls.size()) {
-                std::cerr << "Error: Index out of bounds!" << std::endl;
-                std::cerr << "Index (i): " << (int)i << std::endl;
-                std::cerr << "Size (lookup.sorted_rerolls.size()): " << lookup.sorted_rerolls.size() << std::endl;
-
-                // Terminate the program
-                std::exit(EXIT_FAILURE);
-            }
-            Reroll reroll = lookup.sorted_rerolls[i];
-            dice.reroll(reroll);
-            player().rerolls--;
         } else {
-            const uint32_t never_cross = ~0b10000000000000111100;
-            uint32_t i;
-            if (player().scored_mask & never_cross) {
-                i = (int)worst_category(player().scored_mask & never_cross);
+            if (player().rerolls > 0) {
+                std::array<uint8_t, REROLLS> rerolls = get_best_rerolls(dice, player().scored_mask);
+                uint8_t i = rerolls[0];
+
+                Reroll reroll = lookup.sorted_rerolls[i];
+                dice.reroll(reroll);
+                player().rerolls--;
             } else {
-                i = (int)worst_category(player().scored_mask);
+                const uint32_t never_cross = ~0b10000000000000111100;
+                Category category;
+                if (player().scored_mask & never_cross) {
+                    category = worst_category(player().scored_mask & never_cross);
+                } else {
+                    category = worst_category(player().scored_mask);
+                }
+                CategoryEntry entry;
+                entry.category = category;
+                entry.score = 0;
+                player().score(entry);
+                next_player();
             }
-            player().scored_mask ^= 1 << i;
-            player().scores[i] = 0;
-            next_player();
         }
-
-        // move.type = Move::Type::Cross;
-        // move.crossed_category = (Category)i;
-        // move.type = Move::Type::Reroll;
-        // move.reroll = lookup.rerolls[0];
-        // std::cout << move.to_string() << std::endl;
-
-        // std::cout << scores_string() << std::endl;
+        //std::cout << "Just Played: " << move.to_string() << std::endl;
+        //std::cout << scores_string() << std::endl;
+        //std::cout << std::bitset<32>(player().scored_mask) << std::endl;
     }
 }
 
